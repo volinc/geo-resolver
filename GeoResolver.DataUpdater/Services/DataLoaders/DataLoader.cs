@@ -1,10 +1,8 @@
 using System.Text.Json;
-using GeoResolver.DataUpdater.Models;
 using GeoResolver.DataUpdater.Services;
+using GeoResolver.DataUpdater.Services.Shapefile;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
-using NetTopologySuite.Geometries;
-using NetTopologySuite.IO;
 
 namespace GeoResolver.DataUpdater.Services.DataLoaders;
 
@@ -12,15 +10,18 @@ public class DataLoader : IDataLoader
 {
     private readonly IDatabaseWriterService _databaseWriterService;
     private readonly ILogger<DataLoader> _logger;
+    private readonly NaturalEarthShapefileLoader _shapefileLoader;
     private readonly IHttpClientFactory _httpClientFactory;
 
     public DataLoader(
         IDatabaseWriterService databaseWriterService,
         ILogger<DataLoader> logger,
+        NaturalEarthShapefileLoader shapefileLoader,
         IHttpClientFactory httpClientFactory)
     {
         _databaseWriterService = databaseWriterService;
         _logger = logger;
+        _shapefileLoader = shapefileLoader;
         _httpClientFactory = httpClientFactory;
     }
 
@@ -111,156 +112,42 @@ public class DataLoader : IDataLoader
 
     private async Task LoadRegionsAsync(CancellationToken cancellationToken)
     {
-        // Using Natural Earth Admin 1 States/Provinces 10m - maximum detail suitable for parsing
+        // Using Natural Earth Admin 1 States/Provinces 10m Shapefile (official source)
         // Natural Earth Admin 1 10m provides first-level administrative boundaries (states, provinces, regions)
         // Contains ~4000+ regions worldwide with high geographic detail
-        // File size: typically 15-30MB in GeoJSON format - manageable but requires adequate memory
-        // Fields: name, name_en, admin, adm0_a3, iso_a2, postal, etc.
-        // Note: Natural Earth official data is in Shapefile format, but there are converted GeoJSON versions available
-        var urls = new[]
-        {
-            // Try potential sources for Natural Earth Admin 1 10m GeoJSON
-            // These URLs may need to be updated based on available hosted sources
-            "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_10m_admin_1_states_provinces.geojson"
-            // Note: If CDN returns 403, data needs to be downloaded from Natural Earth and converted
-        };
+        // Source: Official Natural Earth data in Shapefile format
+        _logger.LogInformation("Loading regions from Natural Earth Admin 1 dataset (Shapefile format)...");
         
-        Exception? lastException = null;
-        
-        foreach (var url in urls)
+        try
         {
-            try
-            {
-                using var httpClient = _httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromMinutes(10); // Admin 1 file is large, increase timeout
-                
-                _logger.LogInformation("Downloading regions data from {Url}...", url);
-                var response = await httpClient.GetStringAsync(url, cancellationToken);
-                
-                _logger.LogInformation("Parsing GeoJSON for regions...");
-                var jsonDoc = JsonDocument.Parse(response);
-                var root = jsonDoc.RootElement;
-
-                if (root.GetProperty("type").GetString() != "FeatureCollection")
-                {
-                    _logger.LogWarning("Invalid GeoJSON type from {Url}", url);
-                    continue;
-                }
-
-                // Check if this is actually Admin 1 data by looking at properties structure
-                var features = root.GetProperty("features");
-                if (features.GetArrayLength() == 0)
-                {
-                    _logger.LogWarning("No features found in {Url}", url);
-                    continue;
-                }
-
-                // Try to import - the method will skip features without required data
-                var featureCount = features.GetArrayLength();
-                _logger.LogInformation("Found {Count} features in Admin 1 dataset from {Url}", featureCount, url);
-                
-                await _databaseWriterService.ImportRegionsFromGeoJsonAsync(response, cancellationToken);
-                
-                _logger.LogInformation("Regions import completed from {Url}", url);
-                return; // Success, exit
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogWarning(ex, "Failed to download from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error processing data from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
-            }
+            await _shapefileLoader.LoadRegionsAsync(cancellationToken);
+            _logger.LogInformation("Regions loaded successfully from Natural Earth Shapefile");
         }
-        
-        // All sources failed - log but don't throw, regions are optional
-        _logger.LogWarning(lastException, "Could not load regions data from available sources");
-        _logger.LogInformation("Regions data is optional. To load regions manually:");
-        _logger.LogInformation("1. Download Natural Earth Admin 1 10m Shapefile from: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/");
-        _logger.LogInformation("2. Convert Shapefile to GeoJSON: ogr2ogr -f GeoJSON admin1.geojson ne_10m_admin_1_states_provinces.shp");
-        _logger.LogInformation("3. Host the GeoJSON file and update the URL in LoadRegionsAsync");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load regions from Natural Earth Shapefile");
+            throw;
+        }
     }
 
     private async Task LoadCitiesAsync(CancellationToken cancellationToken)
     {
-        // Using Natural Earth Populated Places 10m - maximum detail suitable for parsing
+        // Using Natural Earth Populated Places 10m Shapefile (official source)
         // Natural Earth Populated Places 10m includes ~7000+ cities, towns, and populated places worldwide
         // Contains capitals, major cities, and significant populated places with coordinates
-        // File size: typically 5-10MB in GeoJSON format - manageable for parsing
-        // Fields: name, nameascii, adm0name, adm0_a3, iso_a2, adm1name, geonameid, etc.
-        // Note: Natural Earth official data is in Shapefile format, but there are converted GeoJSON versions available
-        var urls = new[]
-        {
-            // Try potential sources for Natural Earth Populated Places 10m GeoJSON
-            // These URLs may need to be updated based on available hosted sources
-            "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_10m_populated_places.geojson"
-            // Note: If CDN returns 403, data needs to be downloaded from Natural Earth and converted
-        };
+        // Source: Official Natural Earth data in Shapefile format
+        _logger.LogInformation("Loading cities from Natural Earth Populated Places dataset (Shapefile format)...");
         
-        Exception? lastException = null;
-        
-        foreach (var url in urls)
+        try
         {
-            try
-            {
-                using var httpClient = _httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromMinutes(10); // Populated places file can be large
-                
-                _logger.LogInformation("Downloading cities data from {Url}...", url);
-                var response = await httpClient.GetStringAsync(url, cancellationToken);
-                
-                _logger.LogInformation("Parsing GeoJSON for cities...");
-                var jsonDoc = JsonDocument.Parse(response);
-                var root = jsonDoc.RootElement;
-
-                if (root.GetProperty("type").GetString() != "FeatureCollection")
-                {
-                    _logger.LogWarning("Invalid GeoJSON type from {Url}", url);
-                    continue;
-                }
-
-                // Check if this is actually populated places data
-                var features = root.GetProperty("features");
-                if (features.GetArrayLength() == 0)
-                {
-                    _logger.LogWarning("No features found in {Url}", url);
-                    continue;
-                }
-
-                // Try to import - the method will skip features without required data
-                var featureCount = features.GetArrayLength();
-                _logger.LogInformation("Found {Count} features in populated places dataset from {Url}", featureCount, url);
-                
-                await _databaseWriterService.ImportCitiesFromGeoJsonAsync(response, cancellationToken);
-                
-                _logger.LogInformation("Cities import completed from {Url}", url);
-                return; // Success, exit
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogWarning(ex, "Failed to download from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error processing data from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
-            }
+            await _shapefileLoader.LoadCitiesAsync(cancellationToken);
+            _logger.LogInformation("Cities loaded successfully from Natural Earth Shapefile");
         }
-        
-        // All sources failed - log but don't throw, cities are optional
-        _logger.LogWarning(lastException, "Could not load cities data from available sources");
-        _logger.LogInformation("Cities data is optional. To load cities manually:");
-        _logger.LogInformation("1. Download Natural Earth Populated Places 10m Shapefile from: https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-populated-places/");
-        _logger.LogInformation("2. Convert Shapefile to GeoJSON: ogr2ogr -f GeoJSON populated_places.geojson ne_10m_populated_places.shp");
-        _logger.LogInformation("3. Host the GeoJSON file and update the URL in LoadCitiesAsync");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load cities from Natural Earth Shapefile");
+            throw;
+        }
     }
 
     private async Task LoadTimezonesAsync(CancellationToken cancellationToken)
