@@ -47,7 +47,7 @@ services:
       DataUpdate__IntervalDays: "365"
       ASPNETCORE_URLS: "http://+:8080"
       TZ: "UTC"
-      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "true"
     ports:
       - "8080:8080"
     networks:

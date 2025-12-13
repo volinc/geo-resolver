@@ -19,7 +19,7 @@ COPY --from=build /app/publish .
 
 # Set timezone and environment variables
 ENV TZ=UTC
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
 ENV ASPNETCORE_URLS=http://+:8080
 
 # Chiseled images run as non-root user by default, but we explicitly set it
