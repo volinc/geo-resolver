@@ -13,6 +13,11 @@ RUN dotnet publish "GeoResolver.csproj" -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
 WORKDIR /app
 
+# Note: libgssapi_krb5 warning is non-critical - it's only needed for Kerberos auth
+# For password authentication (which we use), these libraries are optional
+# If needed, libraries can be copied from runtime-deps stage, but chiseled images
+# have limited filesystem structure, so we skip this for simplicity
+
 # Chiseled images already include non-root user 'app' with UID 1654
 # Copy published application
 COPY --from=build /app/publish .

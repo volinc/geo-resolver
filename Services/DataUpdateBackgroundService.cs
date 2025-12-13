@@ -35,10 +35,26 @@ public class DataUpdateBackgroundService : BackgroundService
         }
 
         // Periodic updates
+        // Task.Delay has a maximum of ~24.8 days, so we break large intervals into smaller chunks
+        const int maxDelayDays = 24; // Use 24 days as safe maximum
+        var maxDelay = TimeSpan.FromDays(maxDelayDays);
+        
         while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(_updateInterval, stoppingToken);
-            await TryUpdateDataAsync(stoppingToken);
+            var remainingInterval = _updateInterval;
+            while (remainingInterval > TimeSpan.Zero && !stoppingToken.IsCancellationRequested)
+            {
+                var delay = remainingInterval > maxDelay ? maxDelay : remainingInterval;
+                await Task.Delay(delay, stoppingToken);
+                remainingInterval = remainingInterval > maxDelay 
+                    ? remainingInterval - maxDelay 
+                    : TimeSpan.Zero;
+            }
+            
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                await TryUpdateDataAsync(stoppingToken);
+            }
         }
     }
 
