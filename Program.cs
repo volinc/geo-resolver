@@ -4,6 +4,11 @@ using GeoResolver.Services;
 using GeoResolver.Services.DataLoaders;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
+
+// Register NetTopologySuite for Npgsql (for PostGIS geometry support)
+// In Npgsql 8+, NetTopologySuite is registered automatically when package is referenced
+// But we can explicitly ensure it's registered using DataSourceBuilder pattern if needed
 
 var builder = WebApplication.CreateSlimBuilder(args);
 

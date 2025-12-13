@@ -7,7 +7,7 @@ DROP TABLE IF EXISTS timezones CASCADE;
 DROP TABLE IF EXISTS cities CASCADE;
 DROP TABLE IF EXISTS regions CASCADE;
 DROP TABLE IF EXISTS countries CASCADE;
-DROP TABLE IF EXISTS app_locks CASCADE;
+DROP TABLE IF EXISTS last_update CASCADE;
 
 -- Note: Indexes are automatically dropped when tables are dropped
 -- Sequences are automatically dropped when tables are dropped

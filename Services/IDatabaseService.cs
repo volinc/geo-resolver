@@ -9,8 +9,8 @@ public interface IDatabaseService
     Task<RegionEntity?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
     Task<CityEntity?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
     Task<(int RawOffset, int DstOffset)?> GetTimezoneOffsetAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
-    Task<bool> TryAcquireLockAsync(string lockName, TimeSpan timeout, CancellationToken cancellationToken = default);
-    Task ReleaseLockAsync(string lockName, CancellationToken cancellationToken = default);
+    Task<DateTimeOffset?> GetLastUpdateTimeAsync(CancellationToken cancellationToken = default);
+    Task SetLastUpdateTimeAsync(DateTimeOffset updateTime, CancellationToken cancellationToken = default);
     Task ClearAllDataAsync(CancellationToken cancellationToken = default);
     Task ImportCountriesAsync(IEnumerable<CountryEntity> countries, CancellationToken cancellationToken = default);
     Task ImportCountriesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);

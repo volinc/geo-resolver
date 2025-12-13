@@ -38,12 +38,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      Database__Host: postgres
-      Database__Port: "5432"
-      Database__Name: georesolver
-      Database__Username: georesolver
-      Database__Password: georesolver_password
-      DataUpdate__UpdateOnFirstStart: "true"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=georesolver;Username=georesolver;Password=georesolver_password"
+      DataUpdate__ForceUpdateOnStart: "false"
       DataUpdate__IntervalDays: "365"
       ASPNETCORE_URLS: "http://+:8080"
       TZ: "UTC"

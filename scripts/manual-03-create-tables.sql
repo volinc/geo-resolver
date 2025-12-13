@@ -3,12 +3,16 @@
 -- Requires: database 'georesolver' exists, user 'georesolver' exists, PostGIS extension enabled
 -- Execute as postgres superuser: psql -U postgres -d georesolver -f scripts/manual-03-create-tables.sql
 
--- Create locks table for distributed locking
-CREATE TABLE IF NOT EXISTS app_locks (
-    lock_name VARCHAR(255) PRIMARY KEY,
-    acquired_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+-- Create table for tracking last update time
+CREATE TABLE IF NOT EXISTS last_update (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz
 );
+
+-- Insert initial row if not exists with minimal date to trigger data update on first start
+INSERT INTO last_update (id, updated_at)
+VALUES (1, '1970-01-01 00:00:00+00'::timestamptz)
+ON CONFLICT (id) DO NOTHING;
 
 -- Create countries table
 CREATE TABLE IF NOT EXISTS countries (

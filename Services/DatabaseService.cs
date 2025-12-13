@@ -10,17 +10,11 @@ namespace GeoResolver.Services;
 public class DatabaseService : IDatabaseService
 {
     private readonly string _connectionString;
-    private const string LockTableName = "app_locks";
 
     public DatabaseService(IConfiguration configuration)
     {
-        var host = configuration["Database:Host"] ?? "localhost";
-        var port = configuration["Database:Port"] ?? "5432";
-        var database = configuration["Database:Name"] ?? "georesolver";
-        var username = configuration["Database:Username"] ?? "georesolver";
-        var password = configuration["Database:Password"] ?? throw new InvalidOperationException("Database password must be configured");
-
-        _connectionString = $"Host={host};Port={port};Database={database};Username={username};Password={password};";
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' must be configured");
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -31,15 +25,6 @@ public class DatabaseService : IDatabaseService
         // Ensure PostGIS extension exists
         await using var cmd1 = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS postgis;", connection);
         await cmd1.ExecuteNonQueryAsync(cancellationToken);
-
-        // Create locks table for distributed locking
-        await using var cmd2 = new NpgsqlCommand($@"
-            CREATE TABLE IF NOT EXISTS {LockTableName} (
-                lock_name VARCHAR(255) PRIMARY KEY,
-                acquired_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                expires_at TIMESTAMP WITH TIME ZONE NOT NULL
-            );", connection);
-        await cmd2.ExecuteNonQueryAsync(cancellationToken);
 
         // Create countries table
         await using var cmd3 = new NpgsqlCommand(@"
@@ -234,41 +219,42 @@ public class DatabaseService : IDatabaseService
         }
     }
 
-    public async Task<bool> TryAcquireLockAsync(string lockName, TimeSpan timeout, CancellationToken cancellationToken = default)
+    public async Task<DateTimeOffset?> GetLastUpdateTimeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        // Clean expired locks
-        await using var cmd1 = new NpgsqlCommand($@"
-            DELETE FROM {LockTableName}
-            WHERE expires_at < NOW();", connection);
-        await cmd1.ExecuteNonQueryAsync(cancellationToken);
-
-        var expiresAt = DateTimeOffset.UtcNow.Add(timeout);
-        await using var cmd2 = new NpgsqlCommand($@"
-            INSERT INTO {LockTableName} (lock_name, acquired_at, expires_at)
-            VALUES (@lockName, NOW(), @expiresAt)
-            ON CONFLICT (lock_name) DO UPDATE
-            SET acquired_at = NOW(), expires_at = @expiresAt
-            WHERE {LockTableName}.expires_at < NOW();", connection);
-
-        cmd2.Parameters.AddWithValue("lockName", lockName);
-        cmd2.Parameters.AddWithValue("expiresAt", expiresAt);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT updated_at FROM last_update WHERE id = 1;", 
+            connection);
         
-        var rowsAffected = await cmd2.ExecuteNonQueryAsync(cancellationToken);
-        return rowsAffected > 0;
+        var result = await cmd.ExecuteScalarAsync(cancellationToken);
+        if (result == null || result == DBNull.Value)
+        {
+            return null;
+        }
+
+        if (result is DateTime dateTime)
+        {
+            return new DateTimeOffset(dateTime, TimeSpan.Zero);
+        }
+
+        return null;
     }
 
-    public async Task ReleaseLockAsync(string lockName, CancellationToken cancellationToken = default)
+    public async Task SetLastUpdateTimeAsync(DateTimeOffset updateTime, CancellationToken cancellationToken = default)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        await using var cmd = new NpgsqlCommand($@"
-            DELETE FROM {LockTableName}
-            WHERE lock_name = @lockName;", connection);
-        cmd.Parameters.AddWithValue("lockName", lockName);
+        await using var cmd = new NpgsqlCommand(
+            @"INSERT INTO last_update (id, updated_at) 
+              VALUES (1, @updateTime)
+              ON CONFLICT (id) 
+              DO UPDATE SET updated_at = @updateTime;", 
+            connection);
+        
+        cmd.Parameters.AddWithValue("@updateTime", updateTime.UtcDateTime);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 

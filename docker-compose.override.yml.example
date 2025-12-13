@@ -14,6 +14,6 @@ services:
       - "5000:8080"
     # Переопределить настройки для разработки
     environment:
-      DataUpdate__UpdateOnFirstStart: "false"  # Отключить автообновление при разработке
+      DataUpdate__ForceUpdateOnStart: "false"  # Отключить принудительное обновление при разработке
       Logging__LogLevel__Default: "Debug"
 
