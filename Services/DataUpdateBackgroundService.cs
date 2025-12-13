@@ -1,5 +1,7 @@
+using GeoResolver.Options;
 using GeoResolver.Services.DataLoaders;
 using Medallion.Threading;
+using Microsoft.Extensions.Options;
 
 namespace GeoResolver.Services;
 
@@ -16,21 +18,22 @@ public sealed class DataUpdateBackgroundService : BackgroundService
         IServiceScopeFactory serviceScopeFactory,
         IDistributedLockProvider distributedLockProvider,
         ILogger<DataUpdateBackgroundService> logger,
-        IConfiguration configuration)
+        IOptions<DataUpdateOptions> options)
     {
         _serviceScopeFactory = serviceScopeFactory;
         _distributedLockProvider = distributedLockProvider;
         _logger = logger;
 
-        // Check for updates every 24 hours
-        _checkInterval = TimeSpan.FromHours(24);
+        var dataUpdateOptions = options.Value;
+        
+        // Check for updates every hour
+        _checkInterval = TimeSpan.FromHours(1);
         
         // How old data can be before requiring update (default: 365 days)
-        var intervalDays = configuration.GetValue("DataUpdate:IntervalDays", 365);
-        _updateInterval = TimeSpan.FromDays(intervalDays);
+        _updateInterval = TimeSpan.FromDays(dataUpdateOptions.IntervalDays);
         
         // Force update on start, ignoring last update time from DB
-        _forceUpdateOnStart = configuration.GetValue("DataUpdate:ForceUpdateOnStart", false);
+        _forceUpdateOnStart = dataUpdateOptions.ForceUpdateOnStart;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

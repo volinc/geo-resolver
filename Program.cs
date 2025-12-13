@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using GeoResolver.Models;
+using GeoResolver.Options;
 using GeoResolver.Services;
 using GeoResolver.Services.DataLoaders;
 using Medallion.Threading;
@@ -28,6 +29,11 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
 builder.Services.AddSingleton<IGeoLocationService, GeoLocationService>();
 builder.Services.AddSingleton<IDataLoader, DataLoader>();
+
+// Configure DataUpdate options using Configuration.Binder
+builder.Services.Configure<DataUpdateOptions>(
+    builder.Configuration.GetSection(DataUpdateOptions.SectionName));
+
 builder.Services.AddHostedService<DataUpdateBackgroundService>();
 
 builder.Services.AddHealthChecks()
