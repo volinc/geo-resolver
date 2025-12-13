@@ -1,22 +1,25 @@
 using System.Text.Json;
-using GeoResolver.Models;
+using GeoResolver.DataUpdater.Models;
+using GeoResolver.DataUpdater.Services;
+using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Logging;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.IO;
 
-namespace GeoResolver.Services.DataLoaders;
+namespace GeoResolver.DataUpdater.Services.DataLoaders;
 
 public class DataLoader : IDataLoader
 {
-    private readonly IDatabaseService _databaseService;
+    private readonly IDatabaseWriterService _databaseWriterService;
     private readonly ILogger<DataLoader> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
 
     public DataLoader(
-        IDatabaseService databaseService,
+        IDatabaseWriterService databaseWriterService,
         ILogger<DataLoader> logger,
         IHttpClientFactory httpClientFactory)
     {
-        _databaseService = databaseService;
+        _databaseWriterService = databaseWriterService;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
     }
@@ -24,7 +27,7 @@ public class DataLoader : IDataLoader
     public async Task LoadAllDataAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Clearing existing data...");
-        await _databaseService.ClearAllDataAsync(cancellationToken);
+        await _databaseWriterService.ClearAllDataAsync(cancellationToken);
 
         _logger.LogInformation("Loading countries...");
         await LoadCountriesAsync(cancellationToken);
@@ -77,7 +80,7 @@ public class DataLoader : IDataLoader
                 }
 
                 // Try to import - the method will skip features without ISO codes
-                await _databaseService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
+                await _databaseWriterService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
                 
                 // Check if we got any countries
                 var features = root.GetProperty("features");
@@ -156,7 +159,7 @@ public class DataLoader : IDataLoader
                 var featureCount = features.GetArrayLength();
                 _logger.LogInformation("Found {Count} features in Admin 1 dataset from {Url}", featureCount, url);
                 
-                await _databaseService.ImportRegionsFromGeoJsonAsync(response, cancellationToken);
+                await _databaseWriterService.ImportRegionsFromGeoJsonAsync(response, cancellationToken);
                 
                 _logger.LogInformation("Regions import completed from {Url}", url);
                 return; // Success, exit
@@ -233,7 +236,7 @@ public class DataLoader : IDataLoader
                 var featureCount = features.GetArrayLength();
                 _logger.LogInformation("Found {Count} features in populated places dataset from {Url}", featureCount, url);
                 
-                await _databaseService.ImportCitiesFromGeoJsonAsync(response, cancellationToken);
+                await _databaseWriterService.ImportCitiesFromGeoJsonAsync(response, cancellationToken);
                 
                 _logger.LogInformation("Cities import completed from {Url}", url);
                 return; // Success, exit

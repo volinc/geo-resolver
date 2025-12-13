@@ -1,10 +1,6 @@
 using System.Text.Json.Serialization;
 using GeoResolver.Models;
-using GeoResolver.Options;
 using GeoResolver.Services;
-using GeoResolver.Services.DataLoaders;
-using Medallion.Threading;
-using Medallion.Threading.Postgres;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 // Register NetTopologySuite for Npgsql (for PostGIS geometry support)
@@ -22,19 +18,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
                        ?? throw new InvalidOperationException("'DefaultConnection' is missing.");
 
 builder.Services.AddNpgsqlDataSource(connectionString);
-builder.Services.AddSingleton<IDistributedLockProvider>(_ => 
-    new PostgresDistributedSynchronizationProvider(connectionString));
-
-builder.Services.AddHttpClient();
-builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
 builder.Services.AddSingleton<IGeoLocationService, GeoLocationService>();
-builder.Services.AddSingleton<IDataLoader, DataLoader>();
-
-// Configure DataUpdate options using Configuration.Binder
-builder.Services.Configure<DataUpdateOptions>(
-    builder.Configuration.GetSection(DataUpdateOptions.SectionName));
-
-builder.Services.AddHostedService<DataUpdateBackgroundService>();
 
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database", tags: ["database"]);

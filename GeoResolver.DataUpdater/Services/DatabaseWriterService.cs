@@ -1,19 +1,19 @@
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
-using GeoResolver.Models;
+using GeoResolver.DataUpdater.Models;
 using Npgsql;
 using NetTopologySuite.Geometries;
 using NpgsqlTypes;
 
-namespace GeoResolver.Services;
+namespace GeoResolver.DataUpdater.Services;
 
-public sealed class DatabaseService : IDatabaseService
+public sealed class DatabaseWriterService : IDatabaseWriterService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
     private static readonly Dictionary<string, string> Alpha3ToAlpha2Cache = new(StringComparer.OrdinalIgnoreCase);
 
-    public DatabaseService(NpgsqlDataSource npgsqlDataSource)
+    public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource)
     {
         _npgsqlDataSource = npgsqlDataSource;
     }
@@ -737,5 +737,5 @@ public sealed class DatabaseService : IDatabaseService
 
         await transaction.CommitAsync(cancellationToken);
     }
-}
 
+}

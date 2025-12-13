@@ -1,9 +1,9 @@
-namespace GeoResolver.Models;
+namespace GeoResolver.DataUpdater.Models;
 
 /// <summary>
 /// Database model for countries
 /// </summary>
-public sealed class CountryEntity
+public class CountryEntity
 {
     public int Id { get; set; }
     public required string IsoAlpha2Code { get; set; }
@@ -14,7 +14,7 @@ public sealed class CountryEntity
 /// <summary>
 /// Database model for regions (admin level 1)
 /// </summary>
-public sealed class RegionEntity
+public class RegionEntity
 {
     public int Id { get; set; }
     public required string Identifier { get; set; }
@@ -26,7 +26,7 @@ public sealed class RegionEntity
 /// <summary>
 /// Database model for cities
 /// </summary>
-public sealed class CityEntity
+public class CityEntity
 {
     public int Id { get; set; }
     public required string Identifier { get; set; }
@@ -39,7 +39,7 @@ public sealed class CityEntity
 /// <summary>
 /// Database model for timezones
 /// </summary>
-public sealed class TimezoneEntity
+public class TimezoneEntity
 {
     public int Id { get; set; }
     public required string TimezoneId { get; set; }

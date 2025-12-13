@@ -1,15 +1,10 @@
-using GeoResolver.Models;
+using GeoResolver.DataUpdater.Models;
 
-namespace GeoResolver.Services;
+namespace GeoResolver.DataUpdater.Services;
 
-public interface IDatabaseService
+public interface IDatabaseWriterService
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
-    Task<CountryEntity?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
-    Task<RegionEntity?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
-    Task<CityEntity?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
-    Task<(int RawOffset, int DstOffset)?> GetTimezoneOffsetAsync(double latitude, double longitude, CancellationToken cancellationToken = default);
-    Task<DateTimeOffset?> GetLastUpdateTimeAsync(CancellationToken cancellationToken = default);
     Task SetLastUpdateTimeAsync(DateTimeOffset updateTime, CancellationToken cancellationToken = default);
     Task ClearAllDataAsync(CancellationToken cancellationToken = default);
     Task ImportCountriesAsync(IEnumerable<CountryEntity> countries, CancellationToken cancellationToken = default);

@@ -1,14 +1,15 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
 
 namespace GeoResolver.Services;
 
-public class DatabaseHealthCheck : IHealthCheck
+public sealed class DatabaseHealthCheck : IHealthCheck
 {
-    private readonly IDatabaseService _databaseService;
+    private readonly NpgsqlDataSource _npgsqlDataSource;
 
-    public DatabaseHealthCheck(IDatabaseService databaseService)
+    public DatabaseHealthCheck(NpgsqlDataSource npgsqlDataSource)
     {
-        _databaseService = databaseService;
+        _npgsqlDataSource = npgsqlDataSource;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
@@ -17,14 +18,17 @@ public class DatabaseHealthCheck : IHealthCheck
     {
         try
         {
-            // Try to query a simple point to check database connectivity
-            await _databaseService.FindCountryByPointAsync(0, 0, cancellationToken);
-            return HealthCheckResult.Healthy("Database is accessible");
+            await using var connection = _npgsqlDataSource.CreateConnection();
+            await connection.OpenAsync(cancellationToken);
+            
+            await using var cmd = new NpgsqlCommand("SELECT 1;", connection);
+            await cmd.ExecuteScalarAsync(cancellationToken);
+            
+            return HealthCheckResult.Healthy("Database connection is working");
         }
         catch (Exception ex)
         {
-            return HealthCheckResult.Unhealthy("Database is not accessible", ex);
+            return HealthCheckResult.Unhealthy("Database connection failed", ex);
         }
     }
 }
-

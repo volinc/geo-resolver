@@ -39,8 +39,6 @@ services:
         condition: service_healthy
     environment:
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=georesolver;Username=georesolver;Password=georesolver_password"
-      DataUpdate__ForceUpdateOnStart: "false"
-      DataUpdate__IntervalDays: "365"
       ASPNETCORE_URLS: "http://+:8080"
       TZ: "UTC"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "true"

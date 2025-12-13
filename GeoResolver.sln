@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GeoResolver", "GeoResolver\GeoResolver.csproj", "{32C87BED-65C6-497D-A525-DF6D2E5FF5C2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GeoResolver.DataUpdater", "GeoResolver.DataUpdater\GeoResolver.DataUpdater.csproj", "{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,18 @@ Global
 		{32C87BED-65C6-497D-A525-DF6D2E5FF5C2}.Release|x64.Build.0 = Release|Any CPU
 		{32C87BED-65C6-497D-A525-DF6D2E5FF5C2}.Release|x86.ActiveCfg = Release|Any CPU
 		{32C87BED-65C6-497D-A525-DF6D2E5FF5C2}.Release|x86.Build.0 = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|x64.Build.0 = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Debug|x86.Build.0 = Debug|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|x64.ActiveCfg = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|x64.Build.0 = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|x86.ActiveCfg = Release|Any CPU
+		{8BCA81F2-B9B4-472E-B4AA-D4ADCA0B0448}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,4 +1,4 @@
-namespace GeoResolver.Services.DataLoaders;
+namespace GeoResolver.DataUpdater.Services.DataLoaders;
 
 public interface IDataLoader
 {

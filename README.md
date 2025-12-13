@@ -82,21 +82,43 @@ export Database__Username=georesolver
 export Database__Password=your_password
 ```
 
-### 3. Настройка обновления данных
+### 3. Инициализация данных
 
-В `appsettings.json`:
+Данные обновляются вручную с помощью отдельного консольного приложения `GeoResolver.DataUpdater`. 
+
+**Локальный запуск загрузки данных:**
+
+```bash
+cd GeoResolver.DataUpdater
+dotnet run
+```
+
+Или из корня решения:
+
+```bash
+dotnet run --project GeoResolver.DataUpdater
+```
+
+Приложение:
+- Загружает данные о странах, регионах и городах из открытых источников
+- Очищает существующие данные перед загрузкой новых
+- Использует распределенные блокировки для предотвращения одновременного запуска нескольких процессов
+- Обновляет время последнего обновления в базе данных
+
+**Настройка подключения к базе данных** в `GeoResolver.DataUpdater/appsettings.json`:
 
 ```json
 {
-  "DataUpdate": {
-    "ForceUpdateOnStart": false,
-    "IntervalDays": 365
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=georesolver;Username=georesolver;Password=georesolver_password"
   }
 }
 ```
 
-- `ForceUpdateOnStart` - принудительное обновление данных при старте, игнорируя время последнего обновления из БД (по умолчанию: false)
-- `IntervalDays` - через сколько дней данные считаются устаревшими и требуют обновления (по умолчанию: 365). Фоновый сервис проверяет актуальность данных каждый час
+Или через переменную окружения:
+```bash
+export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=georesolver;Username=georesolver;Password=your_password"
+```
 
 ## Запуск
 
@@ -285,21 +307,22 @@ Endpoint проверяет:
          │
          ▼
 ┌─────────────────┐
-│  Minimal API    │
-│  (Program.cs)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐      ┌──────────────────┐
-│GeoLocationService│      │ DataUpdateService│
-└────────┬────────┘      └────────┬─────────┘
-         │                        │
-         ▼                        ▼
-┌─────────────────┐      ┌──────────────────┐
-│ DatabaseService │      │   DataLoader     │
-└────────┬────────┘      └────────┬─────────┘
-         │                        │
-         └──────────┬─────────────┘
+│  Minimal API    │         ┌──────────────────────┐
+│  (GeoResolver)  │         │ GeoResolver.DataUpdater│
+│                 │         │   (Console App)        │
+└────────┬────────┘         └──────────┬───────────┘
+         │                             │
+         ▼                             ▼
+┌─────────────────┐         ┌──────────────────┐
+│GeoLocationService│         │   DataLoader     │
+└────────┬────────┘         └────────┬─────────┘
+         │                           │
+         ▼                           ▼
+┌─────────────────┐         ┌──────────────────────┐
+│GeoLocationService│        │ DatabaseWriterService│
+└────────┬────────┘         └────────┬─────────┘
+         │                           │
+         └──────────┬────────────────┘
                     ▼
          ┌──────────────────┐
          │   PostgreSQL     │
@@ -309,14 +332,12 @@ Endpoint проверяет:
 
 ## Распределенные блокировки
 
-Сервис использует библиотеку `DistributedLock.Postgres` для реализации распределенных блокировок через PostgreSQL advisory locks. Это позволяет запускать несколько инстансов сервиса одновременно без конфликтов при обновлении данных. Дата последнего обновления хранится в таблице `last_update`, и фоновый сервис проверяет актуальность данных каждый час.
+Приложение для обновления данных (`GeoResolver.DataUpdater`) использует библиотеку `DistributedLock.Postgres` для реализации распределенных блокировок через PostgreSQL advisory locks. Это позволяет запускать несколько процессов обновления данных одновременно без конфликтов.
 
 Механизм работы:
-1. Фоновый сервис проверяет актуальность данных каждый час
-2. Если данные устарели (старше `IntervalDays` дней) или отсутствует запись в `last_update`, запускается обновление
-3. Инстанс пытается получить распределенную блокировку через PostgreSQL advisory locks
-4. Если блокировка уже захвачена другим инстансом, обновление пропускается
-5. После успешного обновления данных обновляется запись в таблице `last_update`
+1. При запуске `GeoResolver.DataUpdater` процесс пытается получить распределенную блокировку через PostgreSQL advisory locks
+2. Если блокировка уже захвачена другим процессом, текущий процесс завершается с предупреждением
+3. После успешной загрузки данных обновляется запись в таблице `last_update`
 
 ## Разработка
 
@@ -328,12 +349,17 @@ GeoResolver/
 │   ├── GeoLocationResponse.cs    # Модель ответа API
 │   └── DatabaseModels.cs          # Модели базы данных
 ├── Services/
-│   ├── DatabaseService.cs         # Работа с БД
-│   ├── GeoLocationService.cs      # Логика геолокации
-│   ├── DataUpdateBackgroundService.cs  # Фоновое обновление
-│   ├── DataLoaders/
-│   │   └── DataLoader.cs          # Загрузка данных
+│   ├── GeoLocationService.cs      # Логика геолокации и работа с БД (чтение)
 │   └── DatabaseHealthCheck.cs     # Health check
+GeoResolver.DataUpdater/
+├── Models/
+│   └── DatabaseModels.cs          # Модели базы данных (для записи)
+├── Services/
+│   ├── DatabaseWriterService.cs   # Сервис для записи в БД
+│   └── DataLoaders/
+│       ├── DataLoader.cs          # Загрузка данных из внешних источников
+│       └── IDataLoader.cs
+└── Program.cs                     # Консольное приложение для обновления данных
 ├── scripts/
 │   ├── docker-01-create-user.sql          # Автоматически: создание пользователя (для Docker)
 │   ├── docker-02-enable-postgis.sql       # Автоматически: включение PostGIS (для Docker)
