@@ -1,0 +1,19 @@
+# Пример файла для локальной разработки
+# Скопируйте этот файл в docker-compose.override.yml для переопределения настроек
+
+version: '3.8'
+
+services:
+  geo-resolver:
+    # Используйте локальную сборку вместо образа
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Можно изменить порт
+    ports:
+      - "5000:8080"
+    # Переопределить настройки для разработки
+    environment:
+      DataUpdate__UpdateOnFirstStart: "false"  # Отключить автообновление при разработке
+      Logging__LogLevel__Default: "Debug"
+

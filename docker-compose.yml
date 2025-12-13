@@ -1,0 +1,54 @@
+version: '3.8'
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  geo-resolver-network:
+    driver: bridge
+    
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: geo-resolver-postgres
+    environment:
+      POSTGRES_USER: georesolver
+      POSTGRES_PASSWORD: georesolver_password
+      POSTGRES_DB: georesolver
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U georesolver -d georesolver"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - geo-resolver-network
+
+  geo-resolver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geo-resolver-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      Database__Host: postgres
+      Database__Port: "5432"
+      Database__Name: georesolver
+      Database__Username: georesolver
+      Database__Password: georesolver_password
+      DataUpdate__UpdateOnFirstStart: "true"
+      DataUpdate__IntervalDays: "365"
+      ASPNETCORE_URLS: "http://+:8080"
+      TZ: "UTC"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+    ports:
+      - "8080:8080"
+    networks:
+      - geo-resolver-network
+    restart: unless-stopped

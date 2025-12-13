@@ -1,0 +1,30 @@
+### GeoResolver API Tests
+
+@baseUrl = http://localhost:5000
+@latitude = 55.7558
+@longitude = 37.6173
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Get GeoLocation - Moscow
+GET {{baseUrl}}/api/geolocation?latitude={{latitude}}&longitude={{longitude}}
+
+### Get GeoLocation - New York
+GET {{baseUrl}}/api/geolocation?latitude=40.7128&longitude=-74.0060
+
+### Get GeoLocation - London
+GET {{baseUrl}}/api/geolocation?latitude=51.5074&longitude=-0.1278
+
+### Get GeoLocation - Invalid latitude
+GET {{baseUrl}}/api/geolocation?latitude=100&longitude=0
+
+### Get GeoLocation - Invalid longitude
+GET {{baseUrl}}/api/geolocation?latitude=0&longitude=200
+
+### Get GeoLocation - Tokyo
+GET {{baseUrl}}/api/geolocation?latitude=35.6762&longitude=139.6503
+
+### Get GeoLocation - Sydney
+GET {{baseUrl}}/api/geolocation?latitude=-33.8688&longitude=151.2093
+
