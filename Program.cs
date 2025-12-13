@@ -52,12 +52,12 @@ app.MapGet("/api/geolocation", async (
     IGeoLocationService geoLocationService,
     CancellationToken cancellationToken) =>
 {
-    if (latitude < -90 || latitude > 90)
+    if (latitude is < -90 or > 90)
     {
         return Results.BadRequest(new ErrorResponse("Latitude must be between -90 and 90"));
     }
 
-    if (longitude < -180 || longitude > 180)
+    if (longitude is < -180 or > 180)
     {
         return Results.BadRequest(new ErrorResponse("Longitude must be between -180 and 180"));
     }

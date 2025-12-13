@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using GeoResolver.Models;
 using Npgsql;
@@ -9,10 +11,43 @@ namespace GeoResolver.Services;
 public sealed class DatabaseService : IDatabaseService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
+    private static readonly Dictionary<string, string> Alpha3ToAlpha2Cache = new(StringComparer.OrdinalIgnoreCase);
 
     public DatabaseService(NpgsqlDataSource npgsqlDataSource)
     {
         _npgsqlDataSource = npgsqlDataSource;
+    }
+
+    private static string? Alpha3ToAlpha2(string alpha3Code)
+    {
+        if (string.IsNullOrWhiteSpace(alpha3Code) || alpha3Code.Length != 3)
+            return null;
+
+        // Check cache first
+        if (Alpha3ToAlpha2Cache.TryGetValue(alpha3Code, out var cached))
+            return cached;
+
+        // Try to get region info using .NET's built-in support
+        try
+        {
+            var regions = CultureInfo.GetCultures(CultureTypes.SpecificCultures)
+                .Select(c => new RegionInfo(c.Name))
+                .Where(r => r.ThreeLetterISORegionName.Equals(alpha3Code, StringComparison.OrdinalIgnoreCase));
+            
+            var region = regions.FirstOrDefault();
+            if (region != null)
+            {
+                var alpha2 = region.TwoLetterISORegionName;
+                Alpha3ToAlpha2Cache[alpha3Code] = alpha2;
+                return alpha2;
+            }
+        }
+        catch
+        {
+            // If RegionInfo fails, return null
+        }
+
+        return null;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -259,50 +294,6 @@ public sealed class DatabaseService : IDatabaseService
         var root = jsonDoc.RootElement;
         var features = root.GetProperty("features");
 
-        // Simple mapping from ISO 3166-1 alpha-3 to alpha-2 for common countries
-        // This is a partial mapping - in production you'd want a complete table
-        var alpha3ToAlpha2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "AFG", "AF" }, { "AGO", "AO" }, { "ALB", "AL" }, { "ARE", "AE" }, { "ARG", "AR" },
-            { "ARM", "AM" }, { "ATA", "AQ" }, { "ATF", "TF" }, { "AUS", "AU" }, { "AUT", "AT" },
-            { "AZE", "AZ" }, { "BDI", "BI" }, { "BEL", "BE" }, { "BEN", "BJ" }, { "BFA", "BF" },
-            { "BGD", "BD" }, { "BGR", "BG" }, { "BHS", "BS" }, { "BIH", "BA" }, { "BLR", "BY" },
-            { "BLZ", "BZ" }, { "BOL", "BO" }, { "BRA", "BR" }, { "BRN", "BN" }, { "BTN", "BT" },
-            { "BWA", "BW" }, { "CAF", "CF" }, { "CAN", "CA" }, { "CHE", "CH" }, { "CHL", "CL" },
-            { "CHN", "CN" }, { "CIV", "CI" }, { "CMR", "CM" }, { "COD", "CD" }, { "COG", "CG" },
-            { "COL", "CO" }, { "COM", "KM" }, { "CPV", "CV" }, { "CRI", "CR" }, { "CUB", "CU" },
-            { "CYP", "CY" }, { "CZE", "CZ" }, { "DEU", "DE" }, { "DJI", "DJ" }, { "DNK", "DK" },
-            { "DOM", "DO" }, { "DZA", "DZ" }, { "ECU", "EC" }, { "EGY", "EG" }, { "ERI", "ER" },
-            { "ESP", "ES" }, { "EST", "EE" }, { "ETH", "ET" }, { "FIN", "FI" }, { "FJI", "FJ" },
-            { "FRA", "FR" }, { "FSM", "FM" }, { "GAB", "GA" }, { "GBR", "GB" }, { "GEO", "GE" },
-            { "GHA", "GH" }, { "GIN", "GN" }, { "GMB", "GM" }, { "GNB", "GW" }, { "GNQ", "GQ" },
-            { "GRC", "GR" }, { "GRD", "GD" }, { "GTM", "GT" }, { "GUY", "GY" }, { "HND", "HN" },
-            { "HRV", "HR" }, { "HTI", "HT" }, { "HUN", "HU" }, { "IDN", "ID" }, { "IND", "IN" },
-            { "IRL", "IE" }, { "IRN", "IR" }, { "IRQ", "IQ" }, { "ISL", "IS" }, { "ISR", "IL" },
-            { "ITA", "IT" }, { "JAM", "JM" }, { "JOR", "JO" }, { "JPN", "JP" }, { "KAZ", "KZ" },
-            { "KEN", "KE" }, { "KGZ", "KG" }, { "KHM", "KH" }, { "KIR", "KI" }, { "KNA", "KN" },
-            { "KOR", "KR" }, { "KWT", "KW" }, { "LAO", "LA" }, { "LBN", "LB" }, { "LBR", "LR" },
-            { "LBY", "LY" }, { "LCA", "LC" }, { "LIE", "LI" }, { "LKA", "LK" }, { "LSO", "LS" },
-            { "LTU", "LT" }, { "LUX", "LU" }, { "LVA", "LV" }, { "MAR", "MA" }, { "MCO", "MC" },
-            { "MDA", "MD" }, { "MDG", "MG" }, { "MDV", "MV" }, { "MEX", "MX" }, { "MHL", "MH" },
-            { "MKD", "MK" }, { "MLI", "ML" }, { "MLT", "MT" }, { "MMR", "MM" }, { "MNE", "ME" },
-            { "MNG", "MN" }, { "MOZ", "MZ" }, { "MRT", "MR" }, { "MUS", "MU" }, { "MWI", "MW" },
-            { "MYS", "MY" }, { "NAM", "NA" }, { "NER", "NE" }, { "NGA", "NG" }, { "NIC", "NI" },
-            { "NLD", "NL" }, { "NOR", "NO" }, { "NPL", "NP" }, { "NRU", "NR" }, { "NZL", "NZ" },
-            { "OMN", "OM" }, { "PAK", "PK" }, { "PAN", "PA" }, { "PER", "PE" }, { "PHL", "PH" },
-            { "PLW", "PW" }, { "PNG", "PG" }, { "POL", "PL" }, { "PRK", "KP" }, { "PRT", "PT" },
-            { "PRY", "PY" }, { "QAT", "QA" }, { "ROU", "RO" }, { "RUS", "RU" }, { "RWA", "RW" },
-            { "SAU", "SA" }, { "SDN", "SD" }, { "SEN", "SN" }, { "SGP", "SG" }, { "SLB", "SB" },
-            { "SLE", "SL" }, { "SLV", "SV" }, { "SOM", "SO" }, { "SRB", "RS" }, { "SSD", "SS" },
-            { "STP", "ST" }, { "SUR", "SR" }, { "SVK", "SK" }, { "SVN", "SI" }, { "SWE", "SE" },
-            { "SWZ", "SZ" }, { "SYC", "SC" }, { "SYR", "SY" }, { "TCD", "TD" }, { "TGO", "TG" },
-            { "THA", "TH" }, { "TJK", "TJ" }, { "TKM", "TM" }, { "TLS", "TL" }, { "TON", "TO" },
-            { "TTO", "TT" }, { "TUN", "TN" }, { "TUR", "TR" }, { "TUV", "TV" }, { "TZA", "TZ" },
-            { "UGA", "UG" }, { "UKR", "UA" }, { "URY", "UY" }, { "USA", "US" }, { "UZB", "UZ" },
-            { "VAT", "VA" }, { "VCT", "VC" }, { "VEN", "VE" }, { "VNM", "VN" }, { "VUT", "VU" },
-            { "WSM", "WS" }, { "YEM", "YE" }, { "ZAF", "ZA" }, { "ZMB", "ZM" }, { "ZWE", "ZW" }
-        };
-
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         foreach (var featureElement in features.EnumerateArray())
@@ -362,10 +353,10 @@ public sealed class DatabaseService : IDatabaseService
                     {
                         isoCode = idValue.ToUpperInvariant();
                     }
-                    // If it's 3 characters (alpha-3), map to alpha-2 using our mapping table
-                    else if (idValue.Length == 3 && alpha3ToAlpha2.TryGetValue(idValue, out var mappedCode))
+                    // If it's 3 characters (alpha-3), map to alpha-2 using RegionInfo
+                    else if (idValue.Length == 3)
                     {
-                        isoCode = mappedCode;
+                        isoCode = Alpha3ToAlpha2(idValue);
                     }
                 }
             }
@@ -435,6 +426,134 @@ public sealed class DatabaseService : IDatabaseService
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task ImportRegionsFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default)
+    {
+        await using var connection = _npgsqlDataSource.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        var jsonDoc = JsonDocument.Parse(geoJsonContent);
+        var root = jsonDoc.RootElement;
+        var features = root.GetProperty("features");
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        int processed = 0;
+        int skipped = 0;
+
+        foreach (var featureElement in features.EnumerateArray())
+        {
+            var properties = featureElement.GetProperty("properties");
+            var geometryElement = featureElement.GetProperty("geometry");
+
+            // Natural Earth Admin 1 uses fields: name, name_en, admin, adm0_a3, iso_a2, postal, etc.
+            // Get country ISO code (alpha-2)
+            string? countryIsoCode = null;
+            
+            // Try iso_a2 (country ISO alpha-2)
+            if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try adm0_iso (alternative field name)
+            else if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = adm0Iso.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try adm0_a3 and map to alpha-2
+            else if (properties.TryGetProperty("adm0_a3", out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
+            {
+                var alpha3Value = adm0A3.GetString();
+                if (!string.IsNullOrWhiteSpace(alpha3Value))
+                    countryIsoCode = Alpha3ToAlpha2(alpha3Value);
+            }
+
+            if (string.IsNullOrWhiteSpace(countryIsoCode) || countryIsoCode.Length != 2)
+            {
+                skipped++;
+                continue;
+            }
+
+            // Get region name
+            var nameLatin = "Unknown";
+            if (properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
+                nameLatin = nameEn.GetString() ?? "Unknown";
+            else if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+                nameLatin = name.GetString() ?? "Unknown";
+            else if (properties.TryGetProperty("NAME", out var nameUpper) && nameUpper.ValueKind == JsonValueKind.String)
+                nameLatin = nameUpper.GetString() ?? "Unknown";
+
+            if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
+            {
+                skipped++;
+                continue;
+            }
+
+            // Generate identifier - use postal code if available, otherwise use name + country code
+            string identifier;
+            if (properties.TryGetProperty("postal", out var postal) && postal.ValueKind == JsonValueKind.String)
+            {
+                var postalValue = postal.GetString();
+                if (!string.IsNullOrWhiteSpace(postalValue))
+                    identifier = postalValue.ToUpperInvariant();
+                else
+                    identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+            else if (properties.TryGetProperty("postal_code", out var postalCode) && postalCode.ValueKind == JsonValueKind.String)
+            {
+                var postalValue = postalCode.GetString();
+                if (!string.IsNullOrWhiteSpace(postalValue))
+                    identifier = postalValue.ToUpperInvariant();
+                else
+                    identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+            else
+            {
+                // Use combination of name and country code as identifier
+                identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+
+            // Normalize identifier (remove special characters, spaces, make safe for database)
+            // Remove or replace characters that might cause issues in identifiers
+            identifier = System.Text.RegularExpressions.Regex.Replace(identifier, @"[^a-zA-Z0-9_]", "_");
+            // Collapse multiple underscores into one
+            identifier = System.Text.RegularExpressions.Regex.Replace(identifier, @"_+", "_");
+            // Remove leading/trailing underscores
+            identifier = identifier.Trim('_');
+
+            var geometryJson = geometryElement.GetRawText();
+
+            await using var cmd = new NpgsqlCommand(@"
+                INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, geometry)
+                VALUES (@identifier, @name, @countryCode, ST_GeomFromGeoJSON(@geometryJson))
+                ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
+                SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;", connection, transaction);
+
+            cmd.Parameters.AddWithValue("identifier", identifier);
+            cmd.Parameters.AddWithValue("name", nameLatin);
+            cmd.Parameters.AddWithValue("countryCode", countryIsoCode);
+            cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
+            
+            try
+            {
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                processed++;
+            }
+            catch
+            {
+                // Skip invalid geometries
+                skipped++;
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        
+        // Note: Logging is done in DataLoader, so we don't need logger here
+        // processed and skipped counts could be returned if needed
+    }
+
     public async Task ImportCitiesAsync(IEnumerable<CityEntity> cities, CancellationToken cancellationToken = default)
     {
         await using var connection = _npgsqlDataSource.CreateConnection();
@@ -459,6 +578,135 @@ public sealed class DatabaseService : IDatabaseService
             cmd.Parameters.AddWithValue("regionIdentifier", city.RegionIdentifier ?? (object)DBNull.Value);
             cmd.Parameters.AddWithValue("geometry", NpgsqlDbType.Bytea, wkb);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default)
+    {
+        await using var connection = _npgsqlDataSource.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        var jsonDoc = JsonDocument.Parse(geoJsonContent);
+        var root = jsonDoc.RootElement;
+        var features = root.GetProperty("features");
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        int processed = 0;
+        int skipped = 0;
+
+        foreach (var featureElement in features.EnumerateArray())
+        {
+            var properties = featureElement.GetProperty("properties");
+            var geometryElement = featureElement.GetProperty("geometry");
+
+            // Natural Earth Populated Places uses fields: name, nameascii, namealt, adm0name, adm0_a3, adm0cap, iso_a2, etc.
+            // Get country ISO code (alpha-2)
+            string? countryIsoCode = null;
+            
+            // Try iso_a2 (country ISO alpha-2)
+            if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try adm0_iso
+            else if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = adm0Iso.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try adm0_a3 and map to alpha-2
+            else if (properties.TryGetProperty("adm0_a3", out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
+            {
+                var alpha3Value = adm0A3.GetString();
+                if (!string.IsNullOrWhiteSpace(alpha3Value))
+                    countryIsoCode = Alpha3ToAlpha2(alpha3Value);
+            }
+
+            if (string.IsNullOrWhiteSpace(countryIsoCode) || countryIsoCode.Length != 2)
+            {
+                skipped++;
+                continue;
+            }
+
+            // Get city name
+            var nameLatin = "Unknown";
+            if (properties.TryGetProperty("nameascii", out var nameAscii) && nameAscii.ValueKind == JsonValueKind.String)
+                nameLatin = nameAscii.GetString() ?? "Unknown";
+            else if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+                nameLatin = name.GetString() ?? "Unknown";
+            else if (properties.TryGetProperty("NAME", out var nameUpper) && nameUpper.ValueKind == JsonValueKind.String)
+                nameLatin = nameUpper.GetString() ?? "Unknown";
+
+            if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
+            {
+                skipped++;
+                continue;
+            }
+
+            // Get region identifier (admin level 1) - optional
+            string? regionIdentifier = null;
+            if (properties.TryGetProperty("adm1name", out var adm1Name) && adm1Name.ValueKind == JsonValueKind.String)
+            {
+                var adm1Value = adm1Name.GetString();
+                if (!string.IsNullOrWhiteSpace(adm1Value))
+                {
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(adm1Value, @"[^a-zA-Z0-9_]", "_");
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionIdentifier, @"_+", "_");
+                    regionIdentifier = regionIdentifier.Trim('_');
+                }
+            }
+
+            // Generate city identifier - use nameascii + country code, or geonames_id if available
+            string identifier;
+            if (properties.TryGetProperty("geonameid", out var geonameId) && geonameId.ValueKind == JsonValueKind.Number)
+            {
+                identifier = geonameId.GetInt64().ToString();
+            }
+            else if (properties.TryGetProperty("GN_ID", out var gnId) && gnId.ValueKind == JsonValueKind.Number)
+            {
+                identifier = gnId.GetInt64().ToString();
+            }
+            else
+            {
+                // Use combination of name and country code as identifier
+                identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+
+            // Normalize identifier
+            identifier = System.Text.RegularExpressions.Regex.Replace(identifier, @"[^a-zA-Z0-9_]", "_");
+            identifier = System.Text.RegularExpressions.Regex.Replace(identifier, @"_+", "_");
+            identifier = identifier.Trim('_');
+
+            // For cities, geometry is typically a Point
+            var geometryJson = geometryElement.GetRawText();
+
+            await using var cmd = new NpgsqlCommand(@"
+                INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, region_identifier, geometry)
+                VALUES (@identifier, @name, @countryCode, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
+                ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
+                SET name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;", connection, transaction);
+
+            cmd.Parameters.AddWithValue("identifier", identifier);
+            cmd.Parameters.AddWithValue("name", nameLatin);
+            cmd.Parameters.AddWithValue("countryCode", countryIsoCode);
+            cmd.Parameters.AddWithValue("regionIdentifier", regionIdentifier ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
+            
+            try
+            {
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                processed++;
+            }
+            catch
+            {
+                // Skip invalid geometries
+                skipped++;
+            }
         }
 
         await transaction.CommitAsync(cancellationToken);
