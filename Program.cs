@@ -2,9 +2,9 @@ using System.Text.Json.Serialization;
 using GeoResolver.Models;
 using GeoResolver.Services;
 using GeoResolver.Services.DataLoaders;
+using Medallion.Threading;
+using Medallion.Threading.Postgres;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Npgsql;
 
 // Register NetTopologySuite for Npgsql (for PostGIS geometry support)
 // In Npgsql 8+, NetTopologySuite is registered automatically when package is referenced
@@ -17,6 +17,13 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, GeoResolverJsonSerializerContext.Default);
 });
 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+                       ?? throw new InvalidOperationException("'DefaultConnection' is missing.");
+
+builder.Services.AddNpgsqlDataSource(connectionString);
+builder.Services.AddSingleton<IDistributedLockProvider>(_ => 
+    new PostgresDistributedSynchronizationProvider(connectionString));
+
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
 builder.Services.AddSingleton<IGeoLocationService, GeoLocationService>();
@@ -24,7 +31,7 @@ builder.Services.AddSingleton<IDataLoader, DataLoader>();
 builder.Services.AddHostedService<DataUpdateBackgroundService>();
 
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("database", tags: new[] { "database" });
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["database"]);
 
 var app = builder.Build();
 

@@ -1,4 +1,3 @@
-using System.Data;
 using System.Text.Json;
 using GeoResolver.Models;
 using Npgsql;
@@ -7,14 +6,13 @@ using NpgsqlTypes;
 
 namespace GeoResolver.Services;
 
-public class DatabaseService : IDatabaseService
+public sealed class DatabaseService : IDatabaseService
 {
-    private readonly string _connectionString;
+    private readonly NpgsqlDataSource _npgsqlDataSource;
 
-    public DatabaseService(IConfiguration configuration)
+    public DatabaseService(NpgsqlDataSource npgsqlDataSource)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' must be configured");
+        _npgsqlDataSource = npgsqlDataSource;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -29,7 +27,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task<CountryEntity?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         var point = $"POINT({longitude} {latitude})";
@@ -58,7 +56,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task<RegionEntity?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         var point = $"POINT({longitude} {latitude})";
@@ -88,7 +86,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task<CityEntity?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         var point = $"POINT({longitude} {latitude})";
@@ -119,7 +117,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task<(int RawOffset, int DstOffset)?> GetTimezoneOffsetAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         var point = $"POINT({longitude} {latitude})";
@@ -170,7 +168,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task<DateTimeOffset?> GetLastUpdateTimeAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand(
@@ -193,7 +191,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task SetLastUpdateTimeAsync(DateTimeOffset updateTime, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand(
@@ -209,7 +207,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ClearAllDataAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var cmd1 = new NpgsqlCommand("TRUNCATE TABLE countries CASCADE;", connection);
@@ -227,7 +225,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ImportCountriesAsync(IEnumerable<CountryEntity> countries, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -254,7 +252,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ImportCountriesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         var jsonDoc = JsonDocument.Parse(geoJsonContent);
@@ -317,7 +315,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ImportRegionsAsync(IEnumerable<RegionEntity> regions, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -345,7 +343,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ImportCitiesAsync(IEnumerable<CityEntity> cities, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -374,7 +372,7 @@ public class DatabaseService : IDatabaseService
 
     public async Task ImportTimezonesAsync(IEnumerable<TimezoneEntity> timezones, CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);

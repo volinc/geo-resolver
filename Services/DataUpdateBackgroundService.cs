@@ -1,40 +1,36 @@
 using GeoResolver.Services.DataLoaders;
-using Medallion.Threading.Postgres;
+using Medallion.Threading;
 
 namespace GeoResolver.Services;
 
-public class DataUpdateBackgroundService : BackgroundService
+public sealed class DataUpdateBackgroundService : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly IDistributedLockProvider _distributedLockProvider;
     private readonly ILogger<DataUpdateBackgroundService> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly string _connectionString;
     private readonly TimeSpan _checkInterval;
     private readonly TimeSpan _updateInterval;
     private readonly bool _forceUpdateOnStart;
 
     public DataUpdateBackgroundService(
-        IServiceProvider serviceProvider,
+        IServiceScopeFactory serviceScopeFactory,
+        IDistributedLockProvider distributedLockProvider,
         ILogger<DataUpdateBackgroundService> logger,
         IConfiguration configuration)
     {
-        _serviceProvider = serviceProvider;
+        _serviceScopeFactory = serviceScopeFactory;
+        _distributedLockProvider = distributedLockProvider;
         _logger = logger;
-        _configuration = configuration;
 
-        // Get connection string for distributed locks
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' must be configured");
-
-        // Check for updates every hour
-        _checkInterval = TimeSpan.FromHours(1);
+        // Check for updates every 24 hours
+        _checkInterval = TimeSpan.FromHours(24);
         
         // How old data can be before requiring update (default: 365 days)
-        var intervalDays = _configuration.GetValue<int>("DataUpdate:IntervalDays", 365);
+        var intervalDays = configuration.GetValue("DataUpdate:IntervalDays", 365);
         _updateInterval = TimeSpan.FromDays(intervalDays);
         
         // Force update on start, ignoring last update time from DB
-        _forceUpdateOnStart = _configuration.GetValue<bool>("DataUpdate:ForceUpdateOnStart", false);
+        _forceUpdateOnStart = configuration.GetValue("DataUpdate:ForceUpdateOnStart", false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -52,18 +48,14 @@ public class DataUpdateBackgroundService : BackgroundService
         // Periodic checks (every hour)
         while (!stoppingToken.IsCancellationRequested)
         {
+            await CheckAndUpdateIfNeededAsync(stoppingToken);
             await Task.Delay(_checkInterval, stoppingToken);
-            
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                await CheckAndUpdateIfNeededAsync(stoppingToken);
-            }
         }
     }
 
     private async Task CheckAndUpdateIfNeededAsync(CancellationToken cancellationToken)
     {
-        using var scope = _serviceProvider.CreateScope();
+        using var scope = _serviceScopeFactory.CreateScope();
         var databaseService = scope.ServiceProvider.GetRequiredService<IDatabaseService>();
 
         try
@@ -111,9 +103,7 @@ public class DataUpdateBackgroundService : BackgroundService
 
     private async Task TryUpdateDataAsync(CancellationToken cancellationToken)
     {
-        // Use DistributedLock.Postgres for distributed locking
-        var lockProvider = new PostgresDistributedSynchronizationProvider(_connectionString);
-        var distributedLock = lockProvider.CreateLock(new PostgresAdvisoryLockKey("geo_resolver_data_update"));
+        var distributedLock = _distributedLockProvider.CreateLock("geo_resolver_data_update");
 
         await using var handle = await distributedLock.TryAcquireAsync(TimeSpan.FromSeconds(30), cancellationToken);
         if (handle == null)
@@ -124,7 +114,7 @@ public class DataUpdateBackgroundService : BackgroundService
 
         try
         {
-            using var scope = _serviceProvider.CreateScope();
+            using var scope = _serviceScopeFactory.CreateScope();
             var databaseService = scope.ServiceProvider.GetRequiredService<IDatabaseService>();
             var dataLoader = scope.ServiceProvider.GetRequiredService<IDataLoader>();
 
