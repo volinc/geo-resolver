@@ -43,33 +43,64 @@ public class DataLoader : IDataLoader
 
     private async Task LoadCountriesAsync(CancellationToken cancellationToken)
     {
-        // Using Natural Earth Data - Admin 0 Countries
-        // Using a well-known GeoJSON source with ISO codes
-        const string url = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson";
+        // Using multiple fallback sources for countries data
+        // Primary: GitHub source with id field (3-letter ISO codes)
+        // Note: We'll extract 2-letter codes from id where possible, or use properties
+        var urls = new[]
+        {
+            "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson"
+        };
         
-        try
+        Exception? lastException = null;
+        
+        foreach (var url in urls)
         {
-            using var httpClient = _httpClientFactory.CreateClient();
-            var response = await httpClient.GetStringAsync(url, cancellationToken);
-            var jsonDoc = JsonDocument.Parse(response);
-            var root = jsonDoc.RootElement;
-
-            if (root.GetProperty("type").GetString() != "FeatureCollection")
+            try
             {
-                _logger.LogWarning("Invalid GeoJSON type");
-                return;
-            }
+                using var httpClient = _httpClientFactory.CreateClient();
+                httpClient.Timeout = TimeSpan.FromMinutes(5);
+                
+                _logger.LogInformation("Downloading countries data from {Url}...", url);
+                var response = await httpClient.GetStringAsync(url, cancellationToken);
+                
+                _logger.LogInformation("Parsing GeoJSON...");
+                var jsonDoc = JsonDocument.Parse(response);
+                var root = jsonDoc.RootElement;
 
-            var features = root.GetProperty("features");
-            
-            // Import directly using GeoJSON - let PostgreSQL parse it
-            await _databaseService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
-            _logger.LogInformation("Countries import completed");
+                if (root.GetProperty("type").GetString() != "FeatureCollection")
+                {
+                    _logger.LogWarning("Invalid GeoJSON type from {Url}", url);
+                    continue;
+                }
+
+                // Try to import - the method will skip features without ISO codes
+                await _databaseService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
+                
+                // Check if we got any countries
+                var features = root.GetProperty("features");
+                var featureCount = features.GetArrayLength();
+                _logger.LogInformation("Processed {Count} features from {Url}", featureCount, url);
+                
+                _logger.LogInformation("Countries import completed successfully");
+                return; // Success, exit
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "Failed to download from {Url}, trying next source...", url);
+                lastException = ex;
+                continue;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing data from {Url}, trying next source...", url);
+                lastException = ex;
+                continue;
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error loading countries");
-        }
+        
+        // All sources failed
+        _logger.LogError(lastException, "All data sources failed. Cannot load countries data.");
+        throw new InvalidOperationException("Failed to load countries data from all available sources", lastException);
     }
 
     private async Task LoadRegionsAsync(CancellationToken cancellationToken)

@@ -266,23 +266,63 @@ public sealed class DatabaseService : IDatabaseService
             var properties = featureElement.GetProperty("properties");
             var geometryElement = featureElement.GetProperty("geometry");
 
-            // Try to get ISO code
+            // Try to get ISO code from various possible fields
+            // Different GeoJSON sources use different field names
             string? isoCode = null;
-            if (properties.TryGetProperty("ISO_A2", out var isoA2))
-                isoCode = isoA2.GetString()?.ToUpperInvariant();
-            else if (properties.TryGetProperty("ISO", out var iso))
-                isoCode = iso.GetString()?.ToUpperInvariant();
-            else if (properties.TryGetProperty("iso_a2", out var isoA2Lower))
-                isoCode = isoA2Lower.GetString()?.ToUpperInvariant();
-            else if (properties.TryGetProperty("iso_a2_eh", out var isoA2Eh))
-                isoCode = isoA2Eh.GetString()?.ToUpperInvariant();
+            
+            // Try ISO_A2 (Natural Earth format)
+            if (properties.TryGetProperty("ISO_A2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2.GetString();
+                // Natural Earth uses "-99" for missing values
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    isoCode = isoValue.ToUpperInvariant();
+            }
+            // Try ISO (some sources use just ISO)
+            else if (properties.TryGetProperty("ISO", out var iso) && iso.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = iso.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
+                    isoCode = isoValue.ToUpperInvariant();
+            }
+            // Try iso_a2 (lowercase)
+            else if (properties.TryGetProperty("iso_a2", out var isoA2Lower) && isoA2Lower.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2Lower.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    isoCode = isoValue.ToUpperInvariant();
+            }
+            // Try iso_a2_eh
+            else if (properties.TryGetProperty("iso_a2_eh", out var isoA2Eh) && isoA2Eh.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2Eh.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    isoCode = isoValue.ToUpperInvariant();
+            }
+            // Try ISO_A2_EH (uppercase variant)
+            else if (properties.TryGetProperty("ISO_A2_EH", out var isoA2EhUpper) && isoA2EhUpper.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2EhUpper.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    isoCode = isoValue.ToUpperInvariant();
+            }
+            // Try id field (some sources use 3-letter ISO codes in id, we can't use those)
+            // But some use 2-letter codes
+            else if (featureElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+            {
+                var idValue = id.GetString();
+                // Only use if it's exactly 2 characters (alpha-2 code)
+                if (!string.IsNullOrWhiteSpace(idValue) && idValue.Length == 2)
+                    isoCode = idValue.ToUpperInvariant();
+            }
 
+            // Natural Earth uses NAME and NAME_LONG fields
             var nameLatin = "Unknown";
-            if (properties.TryGetProperty("NAME", out var name))
+            if (properties.TryGetProperty("NAME", out var name) && name.ValueKind == JsonValueKind.String)
                 nameLatin = name.GetString() ?? "Unknown";
-            else if (properties.TryGetProperty("NAME_LONG", out var nameLong))
+            else if (properties.TryGetProperty("NAME_LONG", out var nameLong) && nameLong.ValueKind == JsonValueKind.String)
                 nameLatin = nameLong.GetString() ?? "Unknown";
-            else if (properties.TryGetProperty("name", out var nameLower))
+            else if (properties.TryGetProperty("name", out var nameLower) && nameLower.ValueKind == JsonValueKind.String)
                 nameLatin = nameLower.GetString() ?? "Unknown";
 
             if (string.IsNullOrWhiteSpace(isoCode) || isoCode.Length != 2)
