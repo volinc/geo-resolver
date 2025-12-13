@@ -32,7 +32,7 @@ services:
   geo-resolver:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: GeoResolver/Dockerfile
     container_name: geo-resolver-app
     depends_on:
       postgres:
