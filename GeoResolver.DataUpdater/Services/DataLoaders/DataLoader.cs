@@ -27,22 +27,46 @@ public class DataLoader : IDataLoader
 
     public async Task LoadAllDataAsync(CancellationToken cancellationToken = default)
     {
+        var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _logger.LogInformation("=== Starting data loading process ===");
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Clearing existing data...");
         await _databaseWriterService.ClearAllDataAsync(cancellationToken);
+        stopwatch.Stop();
+        _logger.LogInformation("Clearing data completed in {ElapsedMilliseconds}ms", stopwatch.ElapsedMilliseconds);
 
+        stopwatch.Restart();
         _logger.LogInformation("Loading countries...");
         await LoadCountriesAsync(cancellationToken);
+        stopwatch.Stop();
+        _logger.LogInformation("Countries loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+            stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
+        stopwatch.Restart();
         _logger.LogInformation("Loading regions...");
         await LoadRegionsAsync(cancellationToken);
+        stopwatch.Stop();
+        _logger.LogInformation("Regions loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+            stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
+        stopwatch.Restart();
         _logger.LogInformation("Loading cities...");
         await LoadCitiesAsync(cancellationToken);
+        stopwatch.Stop();
+        _logger.LogInformation("Cities loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+            stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
+        stopwatch.Restart();
         _logger.LogInformation("Loading timezones...");
         await LoadTimezonesAsync(cancellationToken);
+        stopwatch.Stop();
+        _logger.LogInformation("Timezones loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+            stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
-        _logger.LogInformation("Data loading completed");
+        overallStopwatch.Stop();
+        _logger.LogInformation("=== Data loading process completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes) ===", 
+            overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
     }
 
     private async Task LoadCountriesAsync(CancellationToken cancellationToken)
@@ -67,9 +91,14 @@ public class DataLoader : IDataLoader
                 using var httpClient = _httpClientFactory.CreateClient();
                 httpClient.Timeout = TimeSpan.FromMinutes(5);
                 
+                var downloadStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 _logger.LogInformation("Downloading countries data from {Url}...", url);
                 var response = await httpClient.GetStringAsync(url, cancellationToken);
+                downloadStopwatch.Stop();
+                _logger.LogInformation("Download completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                    downloadStopwatch.ElapsedMilliseconds, downloadStopwatch.Elapsed.TotalSeconds);
                 
+                var parseStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 _logger.LogInformation("Parsing GeoJSON...");
                 var jsonDoc = JsonDocument.Parse(response);
                 var root = jsonDoc.RootElement;
@@ -80,13 +109,19 @@ public class DataLoader : IDataLoader
                     continue;
                 }
 
+                var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 // Try to import - the method will skip features without ISO codes
                 await _databaseWriterService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
+                importStopwatch.Stop();
+                parseStopwatch.Stop();
                 
                 // Check if we got any countries
                 var features = root.GetProperty("features");
                 var featureCount = features.GetArrayLength();
                 _logger.LogInformation("Processed {Count} features from {Url}", featureCount, url);
+                _logger.LogInformation("Parsing took {ParseMs}ms, import took {ImportMs}ms (total: {TotalMs}ms)", 
+                    parseStopwatch.ElapsedMilliseconds, importStopwatch.ElapsedMilliseconds, 
+                    parseStopwatch.ElapsedMilliseconds + importStopwatch.ElapsedMilliseconds);
                 
                 _logger.LogInformation("Countries import completed successfully");
                 return; // Success, exit

@@ -82,7 +82,39 @@ export Database__Username=georesolver
 export Database__Password=your_password
 ```
 
-### 3. Инициализация данных
+### 3. Установка GDAL (требуется для обработки Shapefile данных)
+
+`GeoResolver.DataUpdater` использует оригинальные Shapefile файлы из Natural Earth и требует установки GDAL (Geospatial Data Abstraction Library) для конвертации Shapefile в GeoJSON.
+
+**Установка GDAL:**
+
+- **macOS** (через Homebrew):
+  ```bash
+  brew install gdal
+  ```
+
+- **Ubuntu/Debian**:
+  ```bash
+  sudo apt-get update
+  sudo apt-get install gdal-bin
+  ```
+
+- **Windows**:
+  - Установите OSGeo4W (https://trac.osgeo.org/osgeo4w/) и выберите пакет `gdal` при установке
+  - Или скачайте бинарные файлы GDAL с официального сайта: https://gdal.org/download.html
+
+- **Docker** (если используете Docker для DataUpdater):
+  Добавьте в Dockerfile:
+  ```dockerfile
+  RUN apt-get update && apt-get install -y gdal-bin && rm -rf /var/lib/apt/lists/*
+  ```
+
+После установки убедитесь, что `ogr2ogr` доступен в PATH:
+```bash
+ogr2ogr --version
+```
+
+### 4. Инициализация данных
 
 Данные обновляются вручную с помощью отдельного консольного приложения `GeoResolver.DataUpdater`. 
 
@@ -99,11 +131,36 @@ dotnet run
 dotnet run --project GeoResolver.DataUpdater
 ```
 
-Приложение:
-- Загружает данные о странах, регионах и городах из открытых источников
+**Что делает приложение:**
+- Загружает оригинальные Shapefile архивы с Natural Earth (Admin 1 States/Provinces и Populated Places)
+- Конвертирует Shapefile в GeoJSON с помощью `ogr2ogr` (GDAL)
+- Импортирует данные о странах, регионах и городах в базу данных
 - Очищает существующие данные перед загрузкой новых
 - Использует распределенные блокировки для предотвращения одновременного запуска нескольких процессов
 - Обновляет время последнего обновления в базе данных
+- Логирует время выполнения каждой операции (загрузка, распаковка, конвертация, импорт)
+
+**Пример вывода с логированием времени:**
+```
+[INFO] === Starting data loading process ===
+[INFO] Clearing existing data...
+[INFO] Clearing data completed in 234ms
+[INFO] Loading countries...
+[INFO] Downloading countries data from https://...
+[INFO] Download completed in 1234ms (1.23s)
+[INFO] Countries loading completed in 5678ms (5.68s)
+[INFO] Loading regions...
+[INFO] Starting to load regions from Natural Earth Admin 1 dataset...
+[INFO] Attempting to download Admin 1 Shapefile from https://...
+[INFO] Download completed in 45678ms (45.68s)
+[INFO] ZIP archive extracted to /tmp/... in 1234ms (1.23s)
+[INFO] Converting Shapefile to GeoJSON format using ogr2ogr...
+[INFO] Shapefile converted to GeoJSON in 34567ms (0.58 minutes)
+[INFO] Regions imported to database in 12345ms (12.35s)
+[INFO] Successfully loaded regions from https://... in 93456ms (1.56 minutes)
+...
+[INFO] === Data loading process completed in 234567ms (3.91 minutes) ===
+```
 
 **Настройка подключения к базе данных** в `GeoResolver.DataUpdater/appsettings.json`:
 
@@ -119,6 +176,13 @@ dotnet run --project GeoResolver.DataUpdater
 ```bash
 export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=georesolver;Username=georesolver;Password=your_password"
 ```
+
+**Источники данных:**
+- **Countries**: GeoJSON с GitHub (Natural Earth 10m countries)
+- **Regions**: Natural Earth Admin 1 States/Provinces 10m Shapefile (официальный источник)
+- **Cities**: Natural Earth Populated Places 10m Shapefile (официальный источник)
+
+Приложение автоматически пытается скачать Shapefile архивы с нескольких зеркал Natural Earth. Если автоматическая загрузка не удается, приложение выведет инструкции для ручной загрузки.
 
 ## Запуск
 
@@ -264,10 +328,17 @@ GET http://localhost:5000/health
 
 Сервис использует следующие открытые источники данных:
 
-1. **Natural Earth Data** - для границ стран с ISO кодами
-2. **Timezone Boundary Builder** - для границ временных поясов (требует ручной загрузки)
+1. **Natural Earth Data 10m Countries** - для границ стран с ISO кодами (GeoJSON формат)
+2. **Natural Earth Data 10m Admin 1 States/Provinces** - для границ регионов первого уровня административного деления (Shapefile формат)
+3. **Natural Earth Data 10m Populated Places** - для данных о городах и населенных пунктах (Shapefile формат)
+4. **Timezone Boundary Builder** - для границ временных поясов (не используется в текущей версии, используется приблизительный расчет на основе долготы)
 
-Примечание: Регионы и города в текущей версии не загружаются автоматически, так как требуют дополнительной обработки данных из GeoNames или Natural Earth Admin 1.
+Все данные загружаются автоматически через `GeoResolver.DataUpdater`, который:
+- Скачивает оригинальные Shapefile архивы с Natural Earth
+- Конвертирует их в GeoJSON с помощью GDAL (`ogr2ogr`)
+- Импортирует данные в PostgreSQL с PostGIS
+
+Официальный сайт Natural Earth: https://www.naturalearthdata.com/
 
 ## Кэширование
 

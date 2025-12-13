@@ -38,6 +38,7 @@ public class NaturalEarthShapefileLoader
     /// </summary>
     public async Task LoadRegionsAsync(CancellationToken cancellationToken = default)
     {
+        var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Starting to load regions from Natural Earth Admin 1 dataset...");
         
         // Note: Natural Earth requires manual download from website
@@ -64,6 +65,7 @@ public class NaturalEarthShapefileLoader
                 using var httpClient = _httpClientFactory.CreateClient();
                 httpClient.Timeout = TimeSpan.FromMinutes(15); // Large file, increase timeout
                 
+                var downloadStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 
                 if (!response.IsSuccessStatusCode)
@@ -73,9 +75,15 @@ public class NaturalEarthShapefileLoader
                 }
 
                 await using var zipStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                downloadStopwatch.Stop();
+                _logger.LogInformation("Download completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                    downloadStopwatch.ElapsedMilliseconds, downloadStopwatch.Elapsed.TotalSeconds);
+                
                 await ProcessAdmin1ShapefileZipAsync(zipStream, cancellationToken);
                 
-                _logger.LogInformation("Successfully loaded regions from {Url}", url);
+                overallStopwatch.Stop();
+                _logger.LogInformation("Successfully loaded regions from {Url} in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                    url, overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
                 return;
             }
             catch (HttpRequestException ex)
@@ -107,6 +115,7 @@ public class NaturalEarthShapefileLoader
     /// </summary>
     public async Task LoadCitiesAsync(CancellationToken cancellationToken = default)
     {
+        var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Starting to load cities from Natural Earth Populated Places dataset...");
         
         var downloadUrls = new[]
@@ -129,6 +138,7 @@ public class NaturalEarthShapefileLoader
                 using var httpClient = _httpClientFactory.CreateClient();
                 httpClient.Timeout = TimeSpan.FromMinutes(15); // Large file, increase timeout
                 
+                var downloadStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 
                 if (!response.IsSuccessStatusCode)
@@ -138,9 +148,15 @@ public class NaturalEarthShapefileLoader
                 }
 
                 await using var zipStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                downloadStopwatch.Stop();
+                _logger.LogInformation("Download completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                    downloadStopwatch.ElapsedMilliseconds, downloadStopwatch.Elapsed.TotalSeconds);
+                
                 await ProcessPopulatedPlacesShapefileZipAsync(zipStream, cancellationToken);
                 
-                _logger.LogInformation("Successfully loaded cities from {Url}", url);
+                overallStopwatch.Stop();
+                _logger.LogInformation("Successfully loaded cities from {Url} in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                    url, overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
                 return;
             }
             catch (HttpRequestException ex)
@@ -169,6 +185,7 @@ public class NaturalEarthShapefileLoader
 
     private async Task ProcessAdmin1ShapefileZipAsync(Stream zipStream, CancellationToken cancellationToken)
     {
+        var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Extracting and processing Admin 1 Shapefile ZIP...");
         
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
@@ -177,6 +194,7 @@ public class NaturalEarthShapefileLoader
         try
         {
             // Extract ZIP
+            var extractStopwatch = System.Diagnostics.Stopwatch.StartNew();
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false);
             foreach (var entry in archive.Entries)
             {
@@ -194,8 +212,9 @@ public class NaturalEarthShapefileLoader
                     await entryStream.CopyToAsync(fileStream, cancellationToken);
                 }
             }
-
-            _logger.LogInformation("ZIP archive extracted to {TempDir}", tempDir);
+            extractStopwatch.Stop();
+            _logger.LogInformation("ZIP archive extracted to {TempDir} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                tempDir, extractStopwatch.ElapsedMilliseconds, extractStopwatch.Elapsed.TotalSeconds);
 
             // Convert Shapefile to GeoJSON using NetTopologySuite
             var shpFile = Directory.GetFiles(tempDir, "ne_10m_admin_1_states_provinces.shp", SearchOption.AllDirectories).FirstOrDefault()
@@ -210,12 +229,22 @@ public class NaturalEarthShapefileLoader
             _logger.LogInformation("Converting Shapefile to GeoJSON for processing...");
 
             // Use NetTopologySuite to read Shapefile and convert to GeoJSON
+            var convertStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var geoJson = await ConvertShapefileToGeoJsonAsync(shpFile, cancellationToken);
+            convertStopwatch.Stop();
+            _logger.LogInformation("Shapefile converted to GeoJSON in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                convertStopwatch.ElapsedMilliseconds, convertStopwatch.Elapsed.TotalMinutes);
             
-            _logger.LogInformation("Shapefile converted to GeoJSON, importing regions...");
+            var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            _logger.LogInformation("Importing regions to database...");
             await _databaseWriterService.ImportRegionsFromGeoJsonAsync(geoJson, cancellationToken);
+            importStopwatch.Stop();
+            _logger.LogInformation("Regions imported to database in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                importStopwatch.ElapsedMilliseconds, importStopwatch.Elapsed.TotalSeconds);
             
-            _logger.LogInformation("Regions import completed successfully");
+            overallStopwatch.Stop();
+            _logger.LogInformation("Admin 1 Shapefile processing completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
         }
         finally
         {
@@ -233,6 +262,7 @@ public class NaturalEarthShapefileLoader
 
     private async Task ProcessPopulatedPlacesShapefileZipAsync(Stream zipStream, CancellationToken cancellationToken)
     {
+        var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Extracting and processing Populated Places Shapefile ZIP...");
         
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
@@ -241,6 +271,7 @@ public class NaturalEarthShapefileLoader
         try
         {
             // Extract ZIP
+            var extractStopwatch = System.Diagnostics.Stopwatch.StartNew();
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false);
             foreach (var entry in archive.Entries)
             {
@@ -258,8 +289,9 @@ public class NaturalEarthShapefileLoader
                     await entryStream.CopyToAsync(fileStream, cancellationToken);
                 }
             }
-
-            _logger.LogInformation("ZIP archive extracted to {TempDir}", tempDir);
+            extractStopwatch.Stop();
+            _logger.LogInformation("ZIP archive extracted to {TempDir} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                tempDir, extractStopwatch.ElapsedMilliseconds, extractStopwatch.Elapsed.TotalSeconds);
 
             // Convert Shapefile to GeoJSON
             var shpFile = Directory.GetFiles(tempDir, "ne_10m_populated_places.shp", SearchOption.AllDirectories).FirstOrDefault()
@@ -274,12 +306,22 @@ public class NaturalEarthShapefileLoader
             _logger.LogInformation("Converting Shapefile to GeoJSON for processing...");
 
             // Use NetTopologySuite to read Shapefile and convert to GeoJSON
+            var convertStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var geoJson = await ConvertShapefileToGeoJsonAsync(shpFile, cancellationToken);
+            convertStopwatch.Stop();
+            _logger.LogInformation("Shapefile converted to GeoJSON in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                convertStopwatch.ElapsedMilliseconds, convertStopwatch.Elapsed.TotalMinutes);
             
-            _logger.LogInformation("Shapefile converted to GeoJSON, importing cities...");
+            var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            _logger.LogInformation("Importing cities to database...");
             await _databaseWriterService.ImportCitiesFromGeoJsonAsync(geoJson, cancellationToken);
+            importStopwatch.Stop();
+            _logger.LogInformation("Cities imported to database in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+                importStopwatch.ElapsedMilliseconds, importStopwatch.Elapsed.TotalSeconds);
             
-            _logger.LogInformation("Cities import completed successfully");
+            overallStopwatch.Stop();
+            _logger.LogInformation("Populated Places Shapefile processing completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)", 
+                overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
         }
         finally
         {
