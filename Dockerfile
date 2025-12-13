@@ -7,22 +7,23 @@ RUN dotnet restore "GeoResolver.csproj"
 
 # Copy everything else and build
 COPY . .
+RUN dotnet publish "GeoResolver.csproj" -c Release -o /app/publish
 
-# Publish for linux-x64 (standard platform for containers)
-# For Native AOT, we use linux-x64 as it's the most widely supported
-RUN dotnet publish "GeoResolver.csproj" -c Release -o /app/publish \
-        -r linux-x64 --self-contained false \
-        /p:UseAppHost=false /p:PublishTrimmed=true /p:TrimMode=full
-
-# Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# Runtime stage - using chiseled Ubuntu image (ultra-lightweight, non-root by default)
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
 WORKDIR /app
+
+# Chiseled images already include non-root user 'app' with UID 1654
+# Copy published application
 COPY --from=build /app/publish .
 
-# Set timezone data for Linux
+# Set timezone and environment variables
 ENV TZ=UTC
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 ENV ASPNETCORE_URLS=http://+:8080
+
+# Chiseled images run as non-root user by default, but we explicitly set it
+USER app
 
 EXPOSE 8080
 

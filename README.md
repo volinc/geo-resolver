@@ -4,7 +4,7 @@
 
 ## Описание
 
-GeoResolver - это Native AOT Minimal API на .NET 10, который предоставляет REST API для геолокации на основе координат. Сервис использует открытые источники данных и PostgreSQL с расширением PostGIS для хранения геопространственных данных.
+GeoResolver - это Minimal API на .NET 10, который предоставляет REST API для геолокации на основе координат. Сервис использует открытые источники данных и PostgreSQL с расширением PostGIS для хранения геопространственных данных.
 
 ## Основные возможности
 
@@ -353,12 +353,12 @@ GeoResolver/
 dotnet build -c Release
 ```
 
-### Публикация для Native AOT
+### Публикация
 
-Локальная публикация (без специфичных параметров платформы для разработки):
+Локальная публикация:
 
 ```bash
-dotnet publish -c Release --self-contained
+dotnet publish -c Release
 ```
 
 Публикация для конкретной платформы:
@@ -369,21 +369,17 @@ dotnet publish -c Release -r linux-x64 --self-contained
 
 # Linux ARM64 (совместимо с M1 Mac)
 dotnet publish -c Release -r linux-arm64 --self-contained
+
+# Windows
+dotnet publish -c Release -r win-x64 --self-contained
+
+# macOS
+dotnet publish -c Release -r osx-x64 --self-contained
 ```
 
-**Multi-platform Docker сборка:**
+**Docker сборка:**
 
-Dockerfile настроен для автоматической поддержки нескольких платформ (M1 Mac, x86_64, amd64). При сборке Docker автоматически определит целевую архитектуру и скомпилирует соответствующий образ.
-
-**Trimming и анализаторы:**
-
-Проект настроен с включенным trimming для уменьшения размера публикуемого приложения:
-- Trimming включается автоматически только при публикации с указанием RuntimeIdentifier (например, в Docker)
-- Локальная разработка не использует trimming для упрощения отладки
-- `EnableTrimAnalyzer=true` - включает анализаторы для обнаружения проблем с trimming
-- `EnableAotAnalyzer=true` - включает анализаторы для проверки совместимости с AOT
-
-Анализаторы автоматически предупреждают о потенциальных проблемах при сборке. При использовании trimming убедитесь, что все зависимости совместимы с этой технологией.
+Dockerfile использует легковесный Ubuntu образ (jammy) с non-root пользователем, как рекомендует Microsoft. Образ поддерживает различные платформы благодаря .NET runtime.
 
 ## Лицензия
 

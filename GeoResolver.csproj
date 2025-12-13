@@ -5,21 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <PublishAot>true</PublishAot>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>.</DockerfileContext>
-  </PropertyGroup>
-  
-  <!-- Trimming only for Docker builds (when RuntimeIdentifier is set) -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
-    <PublishTrimmed>true</PublishTrimmed>
-    <TrimMode>full</TrimMode>
-  </PropertyGroup>
-  
-  <!-- Analyzers enabled for all builds to check compatibility -->
-  <PropertyGroup>
-    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
-    <EnableAotAnalyzer>true</EnableAotAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,10 +14,6 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.0.1" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL.NetTopologySuite" Version="10.0.0" />
     <PackageReference Include="Npgsql" Version="10.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <TrimmerRootAssembly Include="Microsoft.AspNetCore.OpenApi" />
   </ItemGroup>
 
 </Project>
