@@ -44,7 +44,7 @@ app.MapGet("/api/geolocation", async (
         return Results.BadRequest(new ErrorResponse("Longitude must be between -180 and 180"));
     }
 
-    var result = await geoLocationService.GetLocationAsync(latitude, longitude, cancellationToken);
+    var result = await geoLocationService.ResolveAsync(latitude, longitude, cancellationToken);
     
     if (result == null)
     {

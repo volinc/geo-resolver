@@ -11,7 +11,7 @@ public class GeoLocationService : IGeoLocationService
         _databaseService = databaseService;
     }
 
-    public async Task<GeoLocationResponse?> GetLocationAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    public async Task<GeoLocationResponse?> ResolveAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
         var countryTask = _databaseService.FindCountryByPointAsync(latitude, longitude, cancellationToken);
         var regionTask = _databaseService.FindRegionByPointAsync(latitude, longitude, cancellationToken);
