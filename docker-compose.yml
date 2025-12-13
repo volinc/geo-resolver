@@ -20,6 +20,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/docker-01-create-user.sql:/docker-entrypoint-initdb.d/01-create-user.sql
+      - ./scripts/docker-02-enable-postgis.sql:/docker-entrypoint-initdb.d/02-enable-postgis.sql
+      - ./scripts/docker-03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U georesolver -d georesolver"]
       interval: 10s

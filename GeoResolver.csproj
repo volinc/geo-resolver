@@ -10,9 +10,16 @@
     <DockerfileContext>.</DockerfileContext>
   </PropertyGroup>
   
-  <!-- Runtime identifier only for Docker build -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' And '$(DockerBuild)' == 'true'">
-    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+  <!-- Trimming only for Docker builds (when RuntimeIdentifier is set) -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+  
+  <!-- Analyzers enabled for all builds to check compatibility -->
+  <PropertyGroup>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>
