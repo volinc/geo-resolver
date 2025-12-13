@@ -19,63 +19,12 @@ public class DatabaseService : IDatabaseService
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        // Ensure PostGIS extension exists
-        await using var cmd1 = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS postgis;", connection);
-        await cmd1.ExecuteNonQueryAsync(cancellationToken);
-
-        // Create countries table
-        await using var cmd3 = new NpgsqlCommand(@"
-            CREATE TABLE IF NOT EXISTS countries (
-                id SERIAL PRIMARY KEY,
-                iso_alpha2_code VARCHAR(2) NOT NULL UNIQUE,
-                name_latin VARCHAR(255) NOT NULL,
-                geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_countries_geometry ON countries USING GIST (geometry);", connection);
-        await cmd3.ExecuteNonQueryAsync(cancellationToken);
-
-        // Create regions table
-        await using var cmd4 = new NpgsqlCommand(@"
-            CREATE TABLE IF NOT EXISTS regions (
-                id SERIAL PRIMARY KEY,
-                identifier VARCHAR(100) NOT NULL,
-                name_latin VARCHAR(255) NOT NULL,
-                country_iso_alpha2_code VARCHAR(2) NOT NULL,
-                geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-                UNIQUE(identifier, country_iso_alpha2_code)
-            );
-            CREATE INDEX IF NOT EXISTS idx_regions_geometry ON regions USING GIST (geometry);
-            CREATE INDEX IF NOT EXISTS idx_regions_country ON regions (country_iso_alpha2_code);", connection);
-        await cmd4.ExecuteNonQueryAsync(cancellationToken);
-
-        // Create cities table
-        await using var cmd5 = new NpgsqlCommand(@"
-            CREATE TABLE IF NOT EXISTS cities (
-                id SERIAL PRIMARY KEY,
-                identifier VARCHAR(100) NOT NULL,
-                name_latin VARCHAR(255) NOT NULL,
-                country_iso_alpha2_code VARCHAR(2) NOT NULL,
-                region_identifier VARCHAR(100),
-                geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-                UNIQUE(identifier, country_iso_alpha2_code)
-            );
-            CREATE INDEX IF NOT EXISTS idx_cities_geometry ON cities USING GIST (geometry);
-            CREATE INDEX IF NOT EXISTS idx_cities_country ON cities (country_iso_alpha2_code);
-            CREATE INDEX IF NOT EXISTS idx_cities_region ON cities (region_identifier);", connection);
-        await cmd5.ExecuteNonQueryAsync(cancellationToken);
-
-        // Create timezones table
-        await using var cmd6 = new NpgsqlCommand(@"
-            CREATE TABLE IF NOT EXISTS timezones (
-                id SERIAL PRIMARY KEY,
-                timezone_id VARCHAR(100) NOT NULL UNIQUE,
-                geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_timezones_geometry ON timezones USING GIST (geometry);", connection);
-        await cmd6.ExecuteNonQueryAsync(cancellationToken);
+        // All database schema objects (tables, indexes, extensions) are created by SQL scripts
+        // This method is kept for interface compatibility but does nothing
+        // SQL scripts location:
+        // - Docker: docker-entrypoint-initdb.d/*.sql
+        // - Manual: scripts/manual-*.sql
+        await Task.CompletedTask;
     }
 
     public async Task<CountryEntity?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
