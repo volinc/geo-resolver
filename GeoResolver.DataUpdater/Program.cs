@@ -41,9 +41,10 @@ Console.WriteLine($"Logging to file: {logFilePath}");
         services.AddHttpClient();
 
         // Register services
-services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
-services.AddSingleton<GeoResolver.DataUpdater.Services.Shapefile.NaturalEarthShapefileLoader>();
-services.AddSingleton<IDataLoader, DataLoader>();
+        services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
+        services.AddSingleton<GeoResolver.DataUpdater.Services.Shapefile.NaturalEarthShapefileLoader>();
+        services.AddSingleton<GeoResolver.DataUpdater.Services.Osm.OsmCityLoader>();
+        services.AddSingleton<IDataLoader, DataLoader>();
 
         var serviceProvider = services.BuildServiceProvider();
 

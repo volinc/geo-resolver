@@ -963,48 +963,102 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             var properties = featureElement.GetProperty("properties");
             var geometryElement = featureElement.GetProperty("geometry");
 
-            // Natural Earth Populated Places uses fields: name, nameascii, namealt, adm0name, adm0_a3, adm0cap, iso_a2, etc.
+            // Support both Natural Earth and OSM formats
+            // Natural Earth: ISO_A2, iso_a2, ADM0_ISO, adm0_iso
+            // OSM: ISO3166-1:alpha2, ISO3166-1:alpha3, ISO3166-1, addr:country
             // Get country ISO codes (both alpha-2 and alpha-3)
             string? countryIsoAlpha2Code = null;
             string? countryIsoAlpha3Code = null;
             
-            // Try ISO_A2 (uppercase - Natural Earth format)
-            if (properties.TryGetProperty("ISO_A2", out var isoA2Upper) && isoA2Upper.ValueKind == JsonValueKind.String)
+            // Try OSM format first: ISO3166-1:alpha2
+            if (properties.TryGetProperty("ISO3166-1:alpha2", out var osmIsoA2) && osmIsoA2.ValueKind == JsonValueKind.String)
             {
-                var isoValue = isoA2Upper.GetString();
-                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                var isoValue = osmIsoA2.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
                     countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+            }
+            // Try OSM format: ISO3166-1:alpha3
+            if (properties.TryGetProperty("ISO3166-1:alpha3", out var osmIsoA3) && osmIsoA3.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = osmIsoA3.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 3)
+                    countryIsoAlpha3Code = isoValue.ToUpperInvariant();
+            }
+            // Try OSM format: ISO3166-1 (can be either alpha-2 or alpha-3)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+            {
+                if (properties.TryGetProperty("ISO3166-1", out var osmIso) && osmIso.ValueKind == JsonValueKind.String)
+                {
+                    var isoValue = osmIso.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue))
+                    {
+                        if (isoValue.Length == 2)
+                            countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                        else if (isoValue.Length == 3)
+                            countryIsoAlpha3Code = isoValue.ToUpperInvariant();
+                    }
+                }
+            }
+            // Try OSM format: addr:country (usually alpha-2)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
+            {
+                if (properties.TryGetProperty("addr:country", out var addrCountry) && addrCountry.ValueKind == JsonValueKind.String)
+                {
+                    var isoValue = addrCountry.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
+                        countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                }
+            }
+            
+            // Try Natural Earth format: ISO_A2 (uppercase)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
+            {
+                if (properties.TryGetProperty("ISO_A2", out var isoA2Upper) && isoA2Upper.ValueKind == JsonValueKind.String)
+                {
+                    var isoValue = isoA2Upper.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                        countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                }
             }
             // Try iso_a2 (lowercase - after ogr2ogr conversion)
-            else if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
             {
-                var isoValue = isoA2.GetString();
-                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
-                    countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+                {
+                    var isoValue = isoA2.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                        countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                }
             }
             // Try ADM0_ISO (uppercase) - usually alpha-2, but could be alpha-3
-            else if (properties.TryGetProperty("ADM0_ISO", out var adm0IsoUpper) && adm0IsoUpper.ValueKind == JsonValueKind.String)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
             {
-                var isoValue = adm0IsoUpper.GetString();
-                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99")
+                if (properties.TryGetProperty("ADM0_ISO", out var adm0IsoUpper) && adm0IsoUpper.ValueKind == JsonValueKind.String)
                 {
-                    if (isoValue.Length == 2)
-                        countryIsoAlpha2Code = isoValue.ToUpperInvariant();
-                    else if (isoValue.Length == 3)
-                        countryIsoAlpha3Code = isoValue.ToUpperInvariant();
+                    var isoValue = adm0IsoUpper.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99")
+                    {
+                        if (isoValue.Length == 2)
+                            countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                        else if (isoValue.Length == 3)
+                            countryIsoAlpha3Code = isoValue.ToUpperInvariant();
+                    }
                 }
             }
             // Try adm0_iso (lowercase - after ogr2ogr conversion)
-            else if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
+            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
             {
-                var isoValue = adm0Iso.GetString();
-                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99")
+                if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
                 {
-                    if (isoValue.Length == 2)
-                        countryIsoAlpha2Code = isoValue.ToUpperInvariant();
-                    else if (isoValue.Length == 3)
-                        countryIsoAlpha3Code = isoValue.ToUpperInvariant();
-            }
+                    var isoValue = adm0Iso.GetString();
+                    if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99")
+                    {
+                        if (isoValue.Length == 2)
+                            countryIsoAlpha2Code = isoValue.ToUpperInvariant();
+                        else if (isoValue.Length == 3)
+                            countryIsoAlpha3Code = isoValue.ToUpperInvariant();
+                    }
+                }
             }
             
             // Try ADM0_A3 (uppercase) - alpha-3 code
@@ -1062,8 +1116,41 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             }
 
             // Get region identifier (admin level 1) - optional
+            // Support both Natural Earth and OSM formats for region identifier
+            // OSM: is_in:state, addr:state, is_in:province
+            // Natural Earth: ADM1NAME, adm1name
             string? regionIdentifier = null;
-            if (properties.TryGetProperty("ADM1NAME", out var adm1NameUpper) && adm1NameUpper.ValueKind == JsonValueKind.String)
+            if (properties.TryGetProperty("is_in:state", out var isInState) && isInState.ValueKind == JsonValueKind.String)
+            {
+                var regionValue = isInState.GetString();
+                if (!string.IsNullOrWhiteSpace(regionValue))
+                {
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionValue, @"[^a-zA-Z0-9_]", "_");
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionIdentifier, @"_+", "_");
+                    regionIdentifier = regionIdentifier.Trim('_');
+                }
+            }
+            else if (properties.TryGetProperty("addr:state", out var addrState) && addrState.ValueKind == JsonValueKind.String)
+            {
+                var regionValue = addrState.GetString();
+                if (!string.IsNullOrWhiteSpace(regionValue))
+                {
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionValue, @"[^a-zA-Z0-9_]", "_");
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionIdentifier, @"_+", "_");
+                    regionIdentifier = regionIdentifier.Trim('_');
+                }
+            }
+            else if (properties.TryGetProperty("is_in:province", out var isInProvince) && isInProvince.ValueKind == JsonValueKind.String)
+            {
+                var regionValue = isInProvince.GetString();
+                if (!string.IsNullOrWhiteSpace(regionValue))
+                {
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionValue, @"[^a-zA-Z0-9_]", "_");
+                    regionIdentifier = System.Text.RegularExpressions.Regex.Replace(regionIdentifier, @"_+", "_");
+                    regionIdentifier = regionIdentifier.Trim('_');
+                }
+            }
+            else if (properties.TryGetProperty("ADM1NAME", out var adm1NameUpper) && adm1NameUpper.ValueKind == JsonValueKind.String)
             {
                 var adm1Value = adm1NameUpper.GetString();
                 if (!string.IsNullOrWhiteSpace(adm1Value))
