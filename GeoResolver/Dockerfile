@@ -1,5 +1,5 @@
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS base
-#FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+#FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER app
 WORKDIR /app
 EXPOSE 8080

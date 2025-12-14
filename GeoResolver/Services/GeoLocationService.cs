@@ -1,17 +1,21 @@
 using GeoResolver.Models;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NetTopologySuite.Geometries;
 using NpgsqlTypes;
+using NodaTime;
 
 namespace GeoResolver.Services;
 
 public sealed class GeoLocationService : IGeoLocationService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
+    private readonly ILogger<GeoLocationService>? _logger;
 
-    public GeoLocationService(NpgsqlDataSource npgsqlDataSource)
+    public GeoLocationService(NpgsqlDataSource npgsqlDataSource, ILogger<GeoLocationService>? logger = null)
     {
         _npgsqlDataSource = npgsqlDataSource;
+        _logger = logger;
     }
 
     public async Task<GeoLocationResponse> ResolveAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
@@ -156,6 +160,8 @@ public sealed class GeoLocationService : IGeoLocationService
         if (await reader.ReadAsync(cancellationToken))
         {
             var timezoneId = reader.GetString(0);
+            _logger?.LogDebug("Found timezone ID '{TimezoneId}' in database for point ({Latitude}, {Longitude})", 
+                timezoneId, latitude, longitude);
             return CalculateTimezoneOffset(timezoneId, DateTimeOffset.UtcNow);
         }
 
@@ -166,25 +172,67 @@ public sealed class GeoLocationService : IGeoLocationService
         return (approximateOffsetSeconds, 0);
     }
 
-    private static (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)
+    private (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)
     {
         try
         {
-            var timeZoneInfo = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-            var localTime = TimeZoneInfo.ConvertTimeFromUtc(utcNow.UtcDateTime, timeZoneInfo);
-            var baseOffset = timeZoneInfo.BaseUtcOffset;
-            var dstOffset = TimeSpan.Zero;
-
-            if (timeZoneInfo.SupportsDaylightSavingTime && timeZoneInfo.IsDaylightSavingTime(localTime))
+            // Normalize timezone ID: trim whitespace and handle common variations
+            var normalizedId = timezoneId?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedId))
             {
-                dstOffset = timeZoneInfo.GetUtcOffset(localTime) - baseOffset;
+                _logger?.LogWarning("Empty or null timezone ID provided");
+                return (0, 0);
             }
 
-            return ((int)baseOffset.TotalSeconds, (int)dstOffset.TotalSeconds);
+            _logger?.LogDebug("Attempting to get timezone info for ID: '{TimezoneId}' (normalized from '{Original}')", 
+                normalizedId, timezoneId);
+            
+            // NodaTime works completely independently of system timezone files
+            // It has built-in IANA timezone database, perfect for chiseled Docker images
+            DateTimeZone? timeZone;
+            try
+            {
+                timeZone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(normalizedId);
+                if (timeZone == null)
+                {
+                    _logger?.LogWarning("Timezone '{TimezoneId}' not found in NodaTime database", normalizedId);
+                    return (0, 0);
+                }
+                
+                _logger?.LogDebug("Successfully retrieved timezone info for '{TimezoneId}'", normalizedId);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error getting timezone '{TimezoneId}' from NodaTime", normalizedId);
+                return (0, 0);
+            }
+
+            // Convert DateTimeOffset to NodaTime Instant
+            var instant = Instant.FromDateTimeUtc(utcNow.UtcDateTime);
+            
+            // Get the zone interval (handles DST automatically)
+            var zoneInterval = timeZone.GetZoneInterval(instant);
+            
+            // Calculate offsets
+            // WallOffset is the total offset from UTC (includes DST)
+            // StandardOffset is the base offset without DST
+            var totalOffset = zoneInterval.WallOffset;
+            var standardOffset = zoneInterval.StandardOffset;
+            var dstOffset = totalOffset - standardOffset;
+
+            // NodaTime Offset uses Seconds property, not TotalSeconds
+            var rawOffsetSeconds = standardOffset.Seconds;
+            var dstOffsetSeconds = dstOffset.Seconds;
+
+            _logger?.LogDebug("Calculated timezone offset for '{TimezoneId}': RawOffset={RawOffset}s, DstOffset={DstOffset}s, Total={Total}s", 
+                normalizedId, rawOffsetSeconds, dstOffsetSeconds, totalOffset.Seconds);
+
+            return (rawOffsetSeconds, dstOffsetSeconds);
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback: try parsing IANA timezone or return UTC
+            _logger?.LogError(ex, "Error calculating timezone offset for '{TimezoneId}'", timezoneId);
+            // Fallback: return UTC if timezone cannot be determined
             return (0, 0);
         }
     }

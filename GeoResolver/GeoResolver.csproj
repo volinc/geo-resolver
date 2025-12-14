@@ -13,6 +13,7 @@
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.0" />
     <PackageReference Include="Npgsql.NetTopologySuite" Version="10.0.0" />
     <PackageReference Include="Npgsql" Version="10.0.0" />
+    <PackageReference Include="NodaTime" Version="3.2.0" />
   </ItemGroup>
 
 </Project>
