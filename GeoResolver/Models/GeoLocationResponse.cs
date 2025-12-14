@@ -7,14 +7,21 @@ public record GeoLocationResponse
 {
     /// <summary>
     /// ISO 3166-1 alpha-2 country code (e.g., "US", "RU", "GB")
-    /// Required if the point is within a country's territory
+    /// Optional - may be null if the point is not within any country's territory (e.g., Antarctica, international waters)
     /// </summary>
-    public required string CountryIsoAlpha2Code { get; init; }
+    public string? CountryIsoAlpha2Code { get; init; }
+
+    /// <summary>
+    /// ISO 3166-1 alpha-3 country code (e.g., "USA", "RUS", "GBR")
+    /// Optional - may be null if the point is not within any country's territory or if country only has alpha-2 code
+    /// </summary>
+    public string? CountryIsoAlpha3Code { get; init; }
 
     /// <summary>
     /// Country name in Latin transliteration (invariant)
+    /// Optional - may be null if the point is not within any country's territory (e.g., Antarctica, international waters)
     /// </summary>
-    public required string CountryNameLatin { get; init; }
+    public string? CountryNameLatin { get; init; }
 
     /// <summary>
     /// Region identifier (e.g., FIPS or GeoNames ID)

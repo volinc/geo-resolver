@@ -47,12 +47,6 @@ app.MapGet("/api/geolocation", async (
     }
 
     var result = await geoLocationService.ResolveAsync(latitude, longitude, cancellationToken);
-    
-    if (result == null)
-    {
-        return Results.NotFound(new ErrorResponse("Location not found for the provided coordinates"));
-    }
-
     return Results.Ok(result);
 })
 .WithName("GetGeoLocation");

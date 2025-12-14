@@ -1,4 +1,5 @@
-﻿using GeoResolver.DataUpdater.Services;
+﻿using GeoResolver.DataUpdater.Logging;
+using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.DataLoaders;
 using Medallion.Threading;
 using Medallion.Threading.Postgres;
@@ -6,79 +7,86 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-var configuration = new ConfigurationBuilder()
-    .SetBasePath(Directory.GetCurrentDirectory())
-    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-    .AddEnvironmentVariables()
-    .Build();
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .AddEnvironmentVariables()
+            .Build();
 
-var connectionString = configuration.GetConnectionString("DefaultConnection")
-                       ?? throw new InvalidOperationException("'DefaultConnection' connection string is missing. Please configure it in appsettings.json or via environment variable ConnectionStrings__DefaultConnection.");
+        var connectionString = configuration.GetConnectionString("DefaultConnection")
+                               ?? throw new InvalidOperationException("'DefaultConnection' connection string is missing. Please configure it in appsettings.json or via environment variable ConnectionStrings__DefaultConnection.");
 
-var services = new ServiceCollection();
+        var services = new ServiceCollection();
 
-// Configure logging
-services.AddLogging(builder =>
-{
-    builder.AddConsole();
-    builder.SetMinimumLevel(LogLevel.Information);
-});
+        // Configure logging
+var logFileName = $"georesolver-dataupdater-{DateTime.Now:yyyyMMdd-HHmmss}.log";
+var logFilePath = Path.Combine(Directory.GetCurrentDirectory(), "logs", logFileName);
 
-// Configure database
-services.AddNpgsqlDataSource(connectionString);
-services.AddSingleton<IDistributedLockProvider>(_ => 
-    new PostgresDistributedSynchronizationProvider(connectionString));
+        services.AddLogging(builder =>
+        {
+            builder.AddConsole();
+    builder.AddFile(logFilePath, LogLevel.Information);
+            builder.SetMinimumLevel(LogLevel.Information);
+        });
 
-// Configure HTTP client
-services.AddHttpClient();
+// Log the log file path
+Console.WriteLine($"Logging to file: {logFilePath}");
 
-// Register services
+        // Configure database
+        services.AddNpgsqlDataSource(connectionString);
+        services.AddSingleton<IDistributedLockProvider>(_ => 
+            new PostgresDistributedSynchronizationProvider(connectionString));
+
+        // Configure HTTP client
+        services.AddHttpClient();
+
+        // Register services
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
 services.AddSingleton<GeoResolver.DataUpdater.Services.Shapefile.NaturalEarthShapefileLoader>();
 services.AddSingleton<IDataLoader, DataLoader>();
 
-var serviceProvider = services.BuildServiceProvider();
+        var serviceProvider = services.BuildServiceProvider();
 
 var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 var logger = loggerFactory.CreateLogger("GeoResolver.DataUpdater");
-var distributedLockProvider = serviceProvider.GetRequiredService<IDistributedLockProvider>();
+        var distributedLockProvider = serviceProvider.GetRequiredService<IDistributedLockProvider>();
 var databaseWriterService = serviceProvider.GetRequiredService<IDatabaseWriterService>();
-var dataLoader = serviceProvider.GetRequiredService<IDataLoader>();
+        var dataLoader = serviceProvider.GetRequiredService<IDataLoader>();
 
-try
-{
-    logger.LogInformation("Starting data loading process...");
+        try
+        {
+            logger.LogInformation("Starting data loading process...");
 
-    // Use distributed lock to prevent concurrent runs
-    var distributedLock = distributedLockProvider.CreateLock("geo_resolver_data_update");
-    
-    await using var handle = await distributedLock.TryAcquireAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-    if (handle == null)
-    {
-        logger.LogWarning("Another data loading process is already running (lock acquired). Exiting.");
-        return 1;
-    }
+            // Use distributed lock to prevent concurrent runs
+            var distributedLock = distributedLockProvider.CreateLock("geo_resolver_data_update");
+            
+            await using var handle = await distributedLock.TryAcquireAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            if (handle == null)
+            {
+                logger.LogWarning("Another data loading process is already running (lock acquired). Exiting.");
+                return 1;
+            }
 
-    logger.LogInformation("Acquired lock, starting data update...");
+            logger.LogInformation("Acquired lock, starting data update...");
 
-    // Initialize database (ensure tables exist)
+            // Initialize database (ensure tables exist)
     await databaseWriterService.InitializeAsync();
 
-    // Load all data
-    await dataLoader.LoadAllDataAsync();
+            // Load all data
+            await dataLoader.LoadAllDataAsync();
 
-    // Update last update time
+            // Update last update time
     await databaseWriterService.SetLastUpdateTimeAsync(DateTimeOffset.UtcNow);
 
-    logger.LogInformation("Data loading completed successfully!");
-    return 0;
-}
-catch (Exception ex)
-{
-    logger.LogError(ex, "Error during data loading");
-    return 1;
-}
-finally
-{
-    await ((IAsyncDisposable)serviceProvider).DisposeAsync();
+            logger.LogInformation("Data loading completed successfully!");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error during data loading");
+            return 1;
+        }
+        finally
+        {
+            await ((IAsyncDisposable)serviceProvider).DisposeAsync();
 }

@@ -16,9 +16,13 @@ ON CONFLICT (id) DO NOTHING;
 -- Create countries table
 CREATE TABLE IF NOT EXISTS countries (
     id SERIAL PRIMARY KEY,
-    iso_alpha2_code VARCHAR(2) NOT NULL UNIQUE,
+    iso_alpha2_code VARCHAR(2),
+    iso_alpha3_code VARCHAR(3),
     name_latin VARCHAR(255) NOT NULL,
-    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL
+    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
+    CONSTRAINT countries_iso_code_check CHECK (iso_alpha2_code IS NOT NULL OR iso_alpha3_code IS NOT NULL),
+    CONSTRAINT countries_iso_alpha2_unique UNIQUE (iso_alpha2_code),
+    CONSTRAINT countries_iso_alpha3_unique UNIQUE (iso_alpha3_code)
 );
 
 -- Create indexes for countries
@@ -29,29 +33,35 @@ CREATE TABLE IF NOT EXISTS regions (
     id SERIAL PRIMARY KEY,
     identifier VARCHAR(100) NOT NULL,
     name_latin VARCHAR(255) NOT NULL,
-    country_iso_alpha2_code VARCHAR(2) NOT NULL,
+    country_iso_alpha2_code VARCHAR(2),
+    country_iso_alpha3_code VARCHAR(3),
     geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    UNIQUE(identifier, country_iso_alpha2_code)
+    CONSTRAINT regions_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL),
+    CONSTRAINT regions_unique UNIQUE(identifier, country_iso_alpha2_code, country_iso_alpha3_code)
 );
 
 -- Create indexes for regions
 CREATE INDEX IF NOT EXISTS idx_regions_geometry ON regions USING GIST (geometry);
-CREATE INDEX IF NOT EXISTS idx_regions_country ON regions (country_iso_alpha2_code);
+CREATE INDEX IF NOT EXISTS idx_regions_country_alpha2 ON regions (country_iso_alpha2_code);
+CREATE INDEX IF NOT EXISTS idx_regions_country_alpha3 ON regions (country_iso_alpha3_code);
 
 -- Create cities table
 CREATE TABLE IF NOT EXISTS cities (
     id SERIAL PRIMARY KEY,
     identifier VARCHAR(100) NOT NULL,
     name_latin VARCHAR(255) NOT NULL,
-    country_iso_alpha2_code VARCHAR(2) NOT NULL,
+    country_iso_alpha2_code VARCHAR(2),
+    country_iso_alpha3_code VARCHAR(3),
     region_identifier VARCHAR(100),
     geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    UNIQUE(identifier, country_iso_alpha2_code)
+    CONSTRAINT cities_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL),
+    CONSTRAINT cities_unique UNIQUE(identifier, country_iso_alpha2_code, country_iso_alpha3_code)
 );
 
 -- Create indexes for cities
 CREATE INDEX IF NOT EXISTS idx_cities_geometry ON cities USING GIST (geometry);
-CREATE INDEX IF NOT EXISTS idx_cities_country ON cities (country_iso_alpha2_code);
+CREATE INDEX IF NOT EXISTS idx_cities_country_alpha2 ON cities (country_iso_alpha2_code);
+CREATE INDEX IF NOT EXISTS idx_cities_country_alpha3 ON cities (country_iso_alpha3_code);
 CREATE INDEX IF NOT EXISTS idx_cities_region ON cities (region_identifier);
 
 -- Create timezones table

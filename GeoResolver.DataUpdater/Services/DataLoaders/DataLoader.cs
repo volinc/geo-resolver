@@ -1,4 +1,3 @@
-using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.Shapefile;
 using Microsoft.Extensions.Logging;
 
@@ -107,22 +106,26 @@ public class DataLoader : IDataLoader
 
     private async Task LoadCitiesAsync(CancellationToken cancellationToken)
     {
-        // Using Natural Earth Populated Places 10m Shapefile (official source)
-        // Natural Earth Populated Places 10m includes ~7000+ cities, towns, and populated places worldwide
-        // Contains capitals, major cities, and significant populated places with coordinates
-        // Source: Official Natural Earth data in Shapefile format
-        _logger.LogInformation("Loading cities from Natural Earth Populated Places dataset (Shapefile format)...");
-
-        try
-        {
-            await _shapefileLoader.LoadCitiesAsync(cancellationToken);
-            _logger.LogInformation("Cities loaded successfully from Natural Earth Shapefile");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to load cities from Natural Earth Shapefile");
-            throw;
-        }
+        // NOTE: City loading is currently disabled
+        // Natural Earth Populated Places contains only POINT geometries, not polygons
+        // To accurately determine cities by coordinates, we need polygon boundaries, not just point locations
+        // 
+        // Alternative data sources with city polygons:
+        // 1. GADM (Global Administrative Areas) - admin level 2 contains city boundaries
+        //    - Requires registration and may have licensing restrictions
+        //    - Download from: https://gadm.org/download_country.html
+        // 2. OpenStreetMap - can export city boundaries via Overpass API or OSM extracts
+        //    - Free and open source
+        //    - Requires filtering for place=city or place=town tags with boundary polygons
+        // 3. GeoNames - some cities have boundary data
+        //    - Requires API access or data export
+        //
+        // Until a suitable polygon-based city data source is implemented,
+        // the cities table will remain empty and city resolution will not be available
+        
+        _logger.LogWarning("City loading is disabled. Natural Earth Populated Places contains only POINT geometries.");
+        _logger.LogWarning("To enable city resolution, implement a data source with polygon boundaries (e.g., GADM admin level 2 or OpenStreetMap).");
+        _logger.LogInformation("Cities loading skipped - table will remain empty");
     }
 
     private async Task LoadTimezonesAsync(CancellationToken cancellationToken)
