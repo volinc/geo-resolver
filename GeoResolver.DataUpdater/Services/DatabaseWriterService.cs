@@ -1201,6 +1201,104 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         }
 
         await transaction.CommitAsync(cancellationToken);
-}
+    }
 
+    public async Task ImportTimezonesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default)
+    {
+        await using var connection = _npgsqlDataSource.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        var jsonDoc = JsonDocument.Parse(geoJsonContent);
+        var root = jsonDoc.RootElement;
+        var features = root.GetProperty("features");
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        int processed = 0;
+        int skipped = 0;
+        var skippedReasons = new Dictionary<string, int>();
+
+        foreach (var featureElement in features.EnumerateArray())
+        {
+            var properties = featureElement.GetProperty("properties");
+            var geometryElement = featureElement.GetProperty("geometry");
+
+            // Timezone Boundary Builder uses "tzid" property for IANA timezone ID
+            string? timezoneId = null;
+            if (properties.TryGetProperty("tzid", out var tzid) && tzid.ValueKind == JsonValueKind.String)
+            {
+                timezoneId = tzid.GetString();
+            }
+            else if (properties.TryGetProperty("TZID", out var tzidUpper) && tzidUpper.ValueKind == JsonValueKind.String)
+            {
+                timezoneId = tzidUpper.GetString();
+            }
+            else if (properties.TryGetProperty("timezone", out var timezone) && timezone.ValueKind == JsonValueKind.String)
+            {
+                timezoneId = timezone.GetString();
+            }
+            else if (properties.TryGetProperty("TIMEZONE", out var timezoneUpper) && timezoneUpper.ValueKind == JsonValueKind.String)
+            {
+                timezoneId = timezoneUpper.GetString();
+            }
+
+            if (string.IsNullOrWhiteSpace(timezoneId))
+            {
+                skipped++;
+                var reason = "Missing or invalid timezone ID";
+                skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+                continue;
+            }
+
+            var geometryJson = geometryElement.GetRawText();
+
+            try
+            {
+                await using var cmd = new NpgsqlCommand(@"
+                    INSERT INTO timezones (timezone_id, geometry)
+                    VALUES (@timezoneId, ST_GeomFromGeoJSON(@geometryJson))
+                    ON CONFLICT (timezone_id) DO UPDATE
+                    SET geometry = EXCLUDED.geometry;", connection, transaction);
+
+                cmd.Parameters.AddWithValue("timezoneId", timezoneId);
+                cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
+                
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                processed++;
+            }
+            catch (PostgresException pgEx)
+            {
+                skipped++;
+                var reason = $"Database error: {pgEx.SqlState} - {pgEx.Message}";
+                if (!skippedReasons.ContainsKey(reason))
+                    skippedReasons[reason] = 0;
+                skippedReasons[reason]++;
+                
+                if (skipped <= 10)
+                {
+                    _logger?.LogWarning("Failed to insert timezone '{TimezoneId}': {Error}", timezoneId, pgEx.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                skipped++;
+                var reason = $"Error: {ex.GetType().Name}";
+                if (!skippedReasons.ContainsKey(reason))
+                    skippedReasons[reason] = 0;
+                skippedReasons[reason]++;
+                
+                if (skipped <= 10)
+                {
+                    _logger?.LogWarning(ex, "Failed to insert timezone '{TimezoneId}'", timezoneId);
+                }
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        
+        _logger?.LogInformation("Timezones import: processed={Processed}, skipped={Skipped}", processed, skipped);
+        foreach (var reason in skippedReasons)
+        {
+            _logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
+        }
+    }
 }

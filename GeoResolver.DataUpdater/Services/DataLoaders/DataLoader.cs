@@ -132,14 +132,20 @@ public class DataLoader : IDataLoader
     {
         // Using timezone-boundary-builder data from GitHub
         // This provides accurate timezone boundaries with IANA timezone IDs
-        // Note: The full file is very large, so for production you would need to:
-        // 1. Download the ZIP file from: https://github.com/evansiroky/timezone-boundary-builder/releases
-        // 2. Extract timezones.geojson
-        // 3. Process and import
+        // Source: https://github.com/evansiroky/timezone-boundary-builder/releases
+        _logger.LogInformation("Loading timezones from timezone-boundary-builder dataset...");
 
-        // For now, timezone loading is skipped
-        // The timezone calculation in DatabaseService.GetTimezoneOffsetAsync uses a longitude-based fallback
-        _logger.LogInformation("Timezone data loading skipped - using longitude-based approximation");
+        try
+        {
+            await _shapefileLoader.LoadTimezonesAsync(cancellationToken);
+            _logger.LogInformation("Timezones loaded successfully from timezone-boundary-builder");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load timezones from timezone-boundary-builder");
+            _logger.LogWarning("Timezone data loading failed - will use longitude-based approximation as fallback");
+            // Don't throw - allow the process to continue with fallback timezone calculation
+        }
     }
 }
 

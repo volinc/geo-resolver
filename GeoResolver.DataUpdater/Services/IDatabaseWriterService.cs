@@ -14,5 +14,6 @@ public interface IDatabaseWriterService
     Task ImportCitiesAsync(IEnumerable<CityEntity> cities, CancellationToken cancellationToken = default);
     Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);
     Task ImportTimezonesAsync(IEnumerable<TimezoneEntity> timezones, CancellationToken cancellationToken = default);
+    Task ImportTimezonesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);
 }
 
