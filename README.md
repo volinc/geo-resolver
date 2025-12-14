@@ -178,9 +178,11 @@ export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=g
 ```
 
 **Источники данных:**
-- **Countries**: GeoJSON с GitHub (Natural Earth 10m countries)
+- **Countries**: Natural Earth Admin 0 Countries 10m Shapefile (официальный источник)
 - **Regions**: Natural Earth Admin 1 States/Provinces 10m Shapefile (официальный источник)
 - **Cities**: Natural Earth Populated Places 10m Shapefile (официальный источник)
+
+Все данные загружаются из одного источника (Natural Earth) для обеспечения консистентности ISO кодов, названий и границ между странами, регионами и городами.
 
 Приложение автоматически пытается скачать Shapefile архивы с нескольких зеркал Natural Earth. Если автоматическая загрузка не удается, приложение выведет инструкции для ручной загрузки.
 
@@ -326,12 +328,19 @@ GET http://localhost:5000/health
 
 ## Источники данных
 
-Сервис использует следующие открытые источники данных:
+Сервис использует **Natural Earth Data** как единственный источник геопространственных данных для обеспечения максимальной консистентности:
 
-1. **Natural Earth Data 10m Countries** - для границ стран с ISO кодами (GeoJSON формат)
+1. **Natural Earth Data 10m Admin 0 Countries** - для границ стран с ISO кодами (Shapefile формат)
 2. **Natural Earth Data 10m Admin 1 States/Provinces** - для границ регионов первого уровня административного деления (Shapefile формат)
 3. **Natural Earth Data 10m Populated Places** - для данных о городах и населенных пунктах (Shapefile формат)
 4. **Timezone Boundary Builder** - для границ временных поясов (не используется в текущей версии, используется приблизительный расчет на основе долготы)
+
+**Преимущества использования единого источника (Natural Earth):**
+- Гарантированная консистентность ISO кодов между странами, регионами и городами
+- Согласованность границ между административными уровнями
+- Все данные из одной версии релиза Natural Earth
+- Единая система названий и идентификаторов
+- Проще отслеживать обновления данных
 
 Все данные загружаются автоматически через `GeoResolver.DataUpdater`, который:
 - Скачивает оригинальные Shapefile архивы с Natural Earth

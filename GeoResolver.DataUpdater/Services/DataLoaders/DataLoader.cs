@@ -1,7 +1,5 @@
-using System.Text.Json;
 using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.Shapefile;
-using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 
 namespace GeoResolver.DataUpdater.Services.DataLoaders;
@@ -11,18 +9,15 @@ public class DataLoader : IDataLoader
     private readonly IDatabaseWriterService _databaseWriterService;
     private readonly ILogger<DataLoader> _logger;
     private readonly NaturalEarthShapefileLoader _shapefileLoader;
-    private readonly IHttpClientFactory _httpClientFactory;
 
     public DataLoader(
         IDatabaseWriterService databaseWriterService,
         ILogger<DataLoader> logger,
-        NaturalEarthShapefileLoader shapefileLoader,
-        IHttpClientFactory httpClientFactory)
+        NaturalEarthShapefileLoader shapefileLoader)
     {
         _databaseWriterService = databaseWriterService;
         _logger = logger;
         _shapefileLoader = shapefileLoader;
-        _httpClientFactory = httpClientFactory;
     }
 
     public async Task LoadAllDataAsync(CancellationToken cancellationToken = default)
@@ -71,78 +66,22 @@ public class DataLoader : IDataLoader
 
     private async Task LoadCountriesAsync(CancellationToken cancellationToken)
     {
-        // Using Natural Earth 10m countries data - maximum detail suitable for parsing (~250KB)
-        // Natural Earth 10m provides high detail country boundaries with ISO codes
-        // File size is manageable for parsing while providing maximum geographic detail
-        var urls = new[]
-        {
-            // Primary: GitHub source with countries data (works, ~250KB)
-            "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson",
-            // Alternative: GitHub datasets repository (may have different structure)
-            "https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson"
-        };
+        // Using Natural Earth Admin 0 Countries 10m Shapefile (official source)
+        // Natural Earth Admin 0 Countries 10m provides country boundaries with ISO codes
+        // Source: Official Natural Earth data in Shapefile format
+        // This ensures data consistency with regions and cities from the same source
+        _logger.LogInformation("Loading countries from Natural Earth Admin 0 dataset (Shapefile format)...");
         
-        Exception? lastException = null;
-        
-        foreach (var url in urls)
+        try
         {
-            try
-            {
-                using var httpClient = _httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromMinutes(5);
-                
-                var downloadStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                _logger.LogInformation("Downloading countries data from {Url}...", url);
-                var response = await httpClient.GetStringAsync(url, cancellationToken);
-                downloadStopwatch.Stop();
-                _logger.LogInformation("Download completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
-                    downloadStopwatch.ElapsedMilliseconds, downloadStopwatch.Elapsed.TotalSeconds);
-                
-                var parseStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                _logger.LogInformation("Parsing GeoJSON...");
-                var jsonDoc = JsonDocument.Parse(response);
-                var root = jsonDoc.RootElement;
-
-                if (root.GetProperty("type").GetString() != "FeatureCollection")
-                {
-                    _logger.LogWarning("Invalid GeoJSON type from {Url}", url);
-                    continue;
-                }
-
-                var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                // Try to import - the method will skip features without ISO codes
-                await _databaseWriterService.ImportCountriesFromGeoJsonAsync(response, cancellationToken);
-                importStopwatch.Stop();
-                parseStopwatch.Stop();
-                
-                // Check if we got any countries
-                var features = root.GetProperty("features");
-                var featureCount = features.GetArrayLength();
-                _logger.LogInformation("Processed {Count} features from {Url}", featureCount, url);
-                _logger.LogInformation("Parsing took {ParseMs}ms, import took {ImportMs}ms (total: {TotalMs}ms)", 
-                    parseStopwatch.ElapsedMilliseconds, importStopwatch.ElapsedMilliseconds, 
-                    parseStopwatch.ElapsedMilliseconds + importStopwatch.ElapsedMilliseconds);
-                
-                _logger.LogInformation("Countries import completed successfully");
-                return; // Success, exit
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogWarning(ex, "Failed to download from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
+            await _shapefileLoader.LoadCountriesAsync(cancellationToken);
+            _logger.LogInformation("Countries loaded successfully from Natural Earth Shapefile");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error processing data from {Url}, trying next source...", url);
-                lastException = ex;
-                continue;
-            }
+            _logger.LogError(ex, "Failed to load countries from Natural Earth Shapefile");
+            throw;
         }
-        
-        // All sources failed
-        _logger.LogError(lastException, "All data sources failed. Cannot load countries data.");
-        throw new InvalidOperationException("Failed to load countries data from all available sources", lastException);
     }
 
     private async Task LoadRegionsAsync(CancellationToken cancellationToken)
@@ -157,9 +96,9 @@ public class DataLoader : IDataLoader
         {
             await _shapefileLoader.LoadRegionsAsync(cancellationToken);
             _logger.LogInformation("Regions loaded successfully from Natural Earth Shapefile");
-        }
-        catch (Exception ex)
-        {
+            }
+            catch (Exception ex)
+            {
             _logger.LogError(ex, "Failed to load regions from Natural Earth Shapefile");
             throw;
         }
@@ -177,9 +116,9 @@ public class DataLoader : IDataLoader
         {
             await _shapefileLoader.LoadCitiesAsync(cancellationToken);
             _logger.LogInformation("Cities loaded successfully from Natural Earth Shapefile");
-        }
-        catch (Exception ex)
-        {
+            }
+            catch (Exception ex)
+            {
             _logger.LogError(ex, "Failed to load cities from Natural Earth Shapefile");
             throw;
         }
