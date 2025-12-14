@@ -684,10 +684,14 @@ public class NaturalEarthShapefileLoader
                 }
             }
 
+            // Timezone Boundary Builder uses different file names in different releases
+            // Try various possible names, including .json extension (not just .geojson)
             var geoJsonFile = Directory.GetFiles(tempDir, "timezones.geojson", SearchOption.AllDirectories).FirstOrDefault()
+                            ?? Directory.GetFiles(tempDir, "combined.json", SearchOption.AllDirectories).FirstOrDefault()
                             ?? Directory.GetFiles(tempDir, "combined-shapefile-with-oceans.geojson", SearchOption.AllDirectories).FirstOrDefault()
                             ?? Directory.GetFiles(tempDir, "combined-shapefile.geojson", SearchOption.AllDirectories).FirstOrDefault()
-                            ?? Directory.GetFiles(tempDir, "*.geojson", SearchOption.AllDirectories).FirstOrDefault();
+                            ?? Directory.GetFiles(tempDir, "*.geojson", SearchOption.AllDirectories).FirstOrDefault()
+                            ?? Directory.GetFiles(tempDir, "*.json", SearchOption.AllDirectories).FirstOrDefault();
 
             if (geoJsonFile == null)
             {
@@ -696,7 +700,7 @@ public class NaturalEarthShapefileLoader
                 {
                     _logger.LogError("  Found: {FileName}", Path.GetRelativePath(tempDir, file));
                 }
-                throw new FileNotFoundException("GeoJSON file (timezones.geojson or combined-shapefile*.geojson) not found in ZIP archive");
+                throw new FileNotFoundException("GeoJSON file (timezones.geojson, combined.json, or combined-shapefile*.geojson) not found in ZIP archive");
             }
 
             _logger.LogInformation("Found GeoJSON file: {GeoJsonFile}", geoJsonFile);
