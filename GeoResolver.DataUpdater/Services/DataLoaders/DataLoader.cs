@@ -35,32 +35,33 @@ public class DataLoader : IDataLoader
         _logger.LogInformation("Loading countries...");
         await LoadCountriesAsync(cancellationToken);
         stopwatch.Stop();
-        _logger.LogInformation("Countries loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+        _logger.LogInformation("Countries loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
             stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
         stopwatch.Restart();
         _logger.LogInformation("Loading regions...");
         await LoadRegionsAsync(cancellationToken);
         stopwatch.Stop();
-        _logger.LogInformation("Regions loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+        _logger.LogInformation("Regions loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
             stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
         stopwatch.Restart();
         _logger.LogInformation("Loading cities...");
         await LoadCitiesAsync(cancellationToken);
         stopwatch.Stop();
-        _logger.LogInformation("Cities loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+        _logger.LogInformation("Cities loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
             stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
         stopwatch.Restart();
         _logger.LogInformation("Loading timezones...");
         await LoadTimezonesAsync(cancellationToken);
         stopwatch.Stop();
-        _logger.LogInformation("Timezones loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)", 
+        _logger.LogInformation("Timezones loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
             stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
         overallStopwatch.Stop();
-        _logger.LogInformation("=== Data loading process completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes) ===", 
+        _logger.LogInformation(
+            "=== Data loading process completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes) ===",
             overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
     }
 
@@ -71,14 +72,14 @@ public class DataLoader : IDataLoader
         // Source: Official Natural Earth data in Shapefile format
         // This ensures data consistency with regions and cities from the same source
         _logger.LogInformation("Loading countries from Natural Earth Admin 0 dataset (Shapefile format)...");
-        
+
         try
         {
             await _shapefileLoader.LoadCountriesAsync(cancellationToken);
             _logger.LogInformation("Countries loaded successfully from Natural Earth Shapefile");
-            }
-            catch (Exception ex)
-            {
+        }
+        catch (Exception ex)
+        {
             _logger.LogError(ex, "Failed to load countries from Natural Earth Shapefile");
             throw;
         }
@@ -91,14 +92,14 @@ public class DataLoader : IDataLoader
         // Contains ~4000+ regions worldwide with high geographic detail
         // Source: Official Natural Earth data in Shapefile format
         _logger.LogInformation("Loading regions from Natural Earth Admin 1 dataset (Shapefile format)...");
-        
+
         try
         {
             await _shapefileLoader.LoadRegionsAsync(cancellationToken);
             _logger.LogInformation("Regions loaded successfully from Natural Earth Shapefile");
-            }
-            catch (Exception ex)
-            {
+        }
+        catch (Exception ex)
+        {
             _logger.LogError(ex, "Failed to load regions from Natural Earth Shapefile");
             throw;
         }
@@ -111,14 +112,14 @@ public class DataLoader : IDataLoader
         // Contains capitals, major cities, and significant populated places with coordinates
         // Source: Official Natural Earth data in Shapefile format
         _logger.LogInformation("Loading cities from Natural Earth Populated Places dataset (Shapefile format)...");
-        
+
         try
         {
             await _shapefileLoader.LoadCitiesAsync(cancellationToken);
             _logger.LogInformation("Cities loaded successfully from Natural Earth Shapefile");
-            }
-            catch (Exception ex)
-            {
+        }
+        catch (Exception ex)
+        {
             _logger.LogError(ex, "Failed to load cities from Natural Earth Shapefile");
             throw;
         }
@@ -132,11 +133,10 @@ public class DataLoader : IDataLoader
         // 1. Download the ZIP file from: https://github.com/evansiroky/timezone-boundary-builder/releases
         // 2. Extract timezones.geojson
         // 3. Process and import
-        
+
         // For now, timezone loading is skipped
         // The timezone calculation in DatabaseService.GetTimezoneOffsetAsync uses a longitude-based fallback
         _logger.LogInformation("Timezone data loading skipped - using longitude-based approximation");
     }
-
 }
 

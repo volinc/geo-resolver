@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using GeoResolver.DataUpdater.Models;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NetTopologySuite.Geometries;
 using NpgsqlTypes;
@@ -11,11 +12,13 @@ namespace GeoResolver.DataUpdater.Services;
 public sealed class DatabaseWriterService : IDatabaseWriterService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
+    private readonly ILogger<DatabaseWriterService>? _logger;
     private static readonly Dictionary<string, string> Alpha3ToAlpha2Cache = new(StringComparer.OrdinalIgnoreCase);
 
-    public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource)
+    public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ILogger<DatabaseWriterService>? logger = null)
     {
         _npgsqlDataSource = npgsqlDataSource;
+        _logger = logger;
     }
 
     private static string? Alpha3ToAlpha2(string alpha3Code)
@@ -295,6 +298,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         var features = root.GetProperty("features");
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        
+        int processed = 0;
+        int skipped = 0;
+        var skippedReasons = new Dictionary<string, int>();
 
         foreach (var featureElement in features.EnumerateArray())
         {
@@ -371,7 +378,23 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 nameLatin = nameLower.GetString() ?? "Unknown";
 
             if (string.IsNullOrWhiteSpace(isoCode) || isoCode.Length != 2)
+            {
+                skipped++;
+                var reason = "Missing or invalid ISO code";
+                skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+                
+                // Log first few skipped features for debugging
+                if (skipped <= 10)
+                {
+                    var allProperties = new System.Text.StringBuilder();
+                    foreach (var prop in properties.EnumerateObject())
+                    {
+                        allProperties.Append($"{prop.Name}={prop.Value}, ");
+                    }
+                    _logger?.LogDebug("Skipped country (missing/invalid ISO code): {Properties}", allProperties);
+                }
                 continue;
+            }
 
             var geometryJson = geometryElement.GetRawText();
 
@@ -388,14 +411,25 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             try
             {
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
+                processed++;
             }
-            catch
+            catch (Exception ex)
             {
                 // Skip invalid geometries
+                skipped++;
+                var reason = $"Database error: {ex.GetType().Name}";
+                skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
             }
         }
 
         await transaction.CommitAsync(cancellationToken);
+        
+        // Log summary
+        _logger?.LogInformation("Countries import: processed={Processed}, skipped={Skipped}", processed, skipped);
+        foreach (var reason in skippedReasons)
+        {
+            _logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
+        }
     }
 
     public async Task ImportRegionsAsync(IEnumerable<RegionEntity> regions, CancellationToken cancellationToken = default)
@@ -448,21 +482,42 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             // Get country ISO code (alpha-2)
             string? countryIsoCode = null;
             
-            // Try iso_a2 (country ISO alpha-2)
-            if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+            // Try ISO_A2 (uppercase - Natural Earth format)
+            if (properties.TryGetProperty("ISO_A2", out var isoA2Upper) && isoA2Upper.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = isoA2Upper.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try iso_a2 (lowercase - after ogr2ogr conversion)
+            else if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
             {
                 var isoValue = isoA2.GetString();
                 if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
                     countryIsoCode = isoValue.ToUpperInvariant();
             }
-            // Try adm0_iso (alternative field name)
+            // Try ADM0_ISO (uppercase)
+            else if (properties.TryGetProperty("ADM0_ISO", out var adm0IsoUpper) && adm0IsoUpper.ValueKind == JsonValueKind.String)
+            {
+                var isoValue = adm0IsoUpper.GetString();
+                if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
+                    countryIsoCode = isoValue.ToUpperInvariant();
+            }
+            // Try adm0_iso (lowercase - after ogr2ogr conversion)
             else if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
             {
                 var isoValue = adm0Iso.GetString();
                 if (!string.IsNullOrWhiteSpace(isoValue) && isoValue.Length == 2)
                     countryIsoCode = isoValue.ToUpperInvariant();
             }
-            // Try adm0_a3 and map to alpha-2
+            // Try ADM0_A3 (uppercase) and map to alpha-2
+            else if (properties.TryGetProperty("ADM0_A3", out var adm0A3Upper) && adm0A3Upper.ValueKind == JsonValueKind.String)
+            {
+                var alpha3Value = adm0A3Upper.GetString();
+                if (!string.IsNullOrWhiteSpace(alpha3Value))
+                    countryIsoCode = Alpha3ToAlpha2(alpha3Value);
+            }
+            // Try adm0_a3 (lowercase - after ogr2ogr conversion) and map to alpha-2
             else if (properties.TryGetProperty("adm0_a3", out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
             {
                 var alpha3Value = adm0A3.GetString();
@@ -473,6 +528,16 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             if (string.IsNullOrWhiteSpace(countryIsoCode) || countryIsoCode.Length != 2)
             {
                 skipped++;
+                // Log first few skipped regions for debugging
+                if (skipped <= 10)
+                {
+                    var regionName = properties.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String 
+                        ? nameProp.GetString() 
+                        : properties.TryGetProperty("name_en", out var nameEnProp) && nameEnProp.ValueKind == JsonValueKind.String
+                            ? nameEnProp.GetString()
+                            : "Unknown";
+                    _logger?.LogDebug("Skipped region '{RegionName}' - missing/invalid country ISO code", regionName);
+                }
                 continue;
             }
 
@@ -491,20 +556,42 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 continue;
             }
 
-            // Generate identifier - use postal code if available, otherwise use name + country code
+            // Generate identifier - prefer postal code, then use name + country code
+            // Natural Earth Admin 1 may have postal codes or use other identifiers
             string identifier;
-            if (properties.TryGetProperty("postal", out var postal) && postal.ValueKind == JsonValueKind.String)
+            
+            // Try POSTAL (uppercase) first
+            if (properties.TryGetProperty("POSTAL", out var postalUpper) && postalUpper.ValueKind == JsonValueKind.String)
             {
-                var postalValue = postal.GetString();
-                if (!string.IsNullOrWhiteSpace(postalValue))
+                var postalValue = postalUpper.GetString();
+                if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
                     identifier = postalValue.ToUpperInvariant();
                 else
                     identifier = $"{nameLatin}_{countryIsoCode}";
             }
+            // Try postal (lowercase - after ogr2ogr conversion)
+            else if (properties.TryGetProperty("postal", out var postal) && postal.ValueKind == JsonValueKind.String)
+            {
+                var postalValue = postal.GetString();
+                if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
+                    identifier = postalValue.ToUpperInvariant();
+                else
+                    identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+            // Try POSTAL_CODE (uppercase)
+            else if (properties.TryGetProperty("POSTAL_CODE", out var postalCodeUpper) && postalCodeUpper.ValueKind == JsonValueKind.String)
+            {
+                var postalValue = postalCodeUpper.GetString();
+                if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
+                    identifier = postalValue.ToUpperInvariant();
+                else
+                    identifier = $"{nameLatin}_{countryIsoCode}";
+            }
+            // Try postal_code (lowercase)
             else if (properties.TryGetProperty("postal_code", out var postalCode) && postalCode.ValueKind == JsonValueKind.String)
             {
                 var postalValue = postalCode.GetString();
-                if (!string.IsNullOrWhiteSpace(postalValue))
+                if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
                     identifier = postalValue.ToUpperInvariant();
                 else
                     identifier = $"{nameLatin}_{countryIsoCode}";
@@ -550,8 +637,32 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
         await transaction.CommitAsync(cancellationToken);
         
-        // Note: Logging is done in DataLoader, so we don't need logger here
-        // processed and skipped counts could be returned if needed
+        // Log summary
+        _logger?.LogInformation("Regions import: processed={Processed}, skipped={Skipped}", processed, skipped);
+        
+        // Query to check regions per country (for debugging)
+        try
+        {
+            await using var checkCmd = new NpgsqlCommand(
+                @"SELECT country_iso_alpha2_code, COUNT(*) as region_count 
+                  FROM regions 
+                  GROUP BY country_iso_alpha2_code 
+                  ORDER BY region_count DESC 
+                  LIMIT 10;", 
+            connection);
+        
+            await using var reader = await checkCmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var countryCode = reader.GetString(0);
+                var count = reader.GetInt64(1);
+                _logger?.LogInformation("  Country {CountryCode}: {Count} regions", countryCode, count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Failed to query region counts");
+        }
     }
 
     public async Task ImportCitiesAsync(IEnumerable<CityEntity> cities, CancellationToken cancellationToken = default)
@@ -736,6 +847,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         }
 
         await transaction.CommitAsync(cancellationToken);
-    }
+}
 
 }
