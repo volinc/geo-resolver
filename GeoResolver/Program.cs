@@ -2,6 +2,8 @@ using System.Text.Json.Serialization;
 using GeoResolver.Models;
 using GeoResolver.Services;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Npgsql;
+using Npgsql.NetTopologySuite;
 
 // Register NetTopologySuite for Npgsql (for PostGIS geometry support)
 // In Npgsql 8+, NetTopologySuite is registered automatically when package is referenced
@@ -17,7 +19,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? throw new InvalidOperationException("'DefaultConnection' is missing.");
 
-builder.Services.AddNpgsqlDataSource(connectionString);
+// Configure Npgsql with NetTopologySuite support for PostGIS geometry types
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+dataSourceBuilder.UseNetTopologySuite();
+var dataSource = dataSourceBuilder.Build();
+
+builder.Services.AddSingleton(dataSource);
 builder.Services.AddSingleton<IGeoLocationService, GeoLocationService>();
 
 builder.Services.AddHealthChecks()
