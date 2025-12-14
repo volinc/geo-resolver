@@ -37,9 +37,13 @@ CREATE TABLE IF NOT EXISTS regions (
     country_iso_alpha2_code VARCHAR(2),
     country_iso_alpha3_code VARCHAR(3),
     geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    CONSTRAINT regions_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL),
-    CONSTRAINT regions_unique UNIQUE(identifier, country_iso_alpha2_code, country_iso_alpha3_code)
+    CONSTRAINT regions_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
 );
+
+-- Create unique indexes for regions (without WHERE clause)
+-- PostgreSQL treats NULL as distinct, so records with NULL won't conflict
+CREATE UNIQUE INDEX IF NOT EXISTS regions_unique_alpha2 ON regions (identifier, country_iso_alpha2_code);
+CREATE UNIQUE INDEX IF NOT EXISTS regions_unique_alpha3 ON regions (identifier, country_iso_alpha3_code);
 
 -- Create indexes for regions
 CREATE INDEX IF NOT EXISTS idx_regions_geometry ON regions USING GIST (geometry);

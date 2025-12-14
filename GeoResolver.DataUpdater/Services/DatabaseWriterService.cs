@@ -546,21 +546,24 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         foreach (var region in regions)
         {
             // Build query based on which codes are available
+            // Use partial unique indexes to handle NULL values properly
             string insertQuery;
             if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(region.CountryIsoAlpha3Code))
             {
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
-                    SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                    ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
+                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
+                        name_latin = EXCLUDED.name_latin, 
+                        geometry = EXCLUDED.geometry;";
             }
             else if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha2Code))
             {
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
+                    ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
             }
             else if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha3Code))
@@ -568,7 +571,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, NULL, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
+                    ON CONFLICT (identifier, country_iso_alpha3_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
             }
             else
@@ -761,15 +764,18 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
             var geometryJson = geometryElement.GetRawText();
 
             // Build the INSERT query dynamically based on which codes we have
+            // Use partial unique indexes to handle NULL values properly
             string insertQuery;
             if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
             {
-                // Both codes available
+                // Both codes available - use alpha-2 index (both should work, but alpha-2 is primary)
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
-                    SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                    ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
+                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
+                        name_latin = EXCLUDED.name_latin, 
+                        geometry = EXCLUDED.geometry;";
             }
             else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
             {
@@ -777,7 +783,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
+                    ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
             }
             else
@@ -786,7 +792,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, NULL, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier, country_iso_alpha2_code, country_iso_alpha3_code) DO UPDATE
+                    ON CONFLICT (identifier, country_iso_alpha3_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
             }
 
