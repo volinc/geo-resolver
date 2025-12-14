@@ -15,7 +15,7 @@ services:
     - "--mode=server"
     - "--frontend-port=57000"
     - "--backend-port=57200"
-    - "--roslyn-worker-port=57402"
+    - "--roslyn-worker-port=57404"
     - "--timeout=60"
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
@@ -24,14 +24,14 @@ services:
       RESHARPER_LOG_CONF: "/etc/opt/JetBrains/RiderDebuggerTools/backend-log.xml"
     image: "georesolver:dev"
     ports:
-    - "127.0.0.1:57002:57000"
-    - "127.0.0.1:57202:57200"
-    - "127.0.0.1:57402:57402"
+    - "127.0.0.1:57004:57000"
+    - "127.0.0.1:57204:57200"
+    - "127.0.0.1:57404:57404"
     volumes:
     - "/Users/vol.inc/Projects/Own/geo-resolver/GeoResolver:/app:rw"
     - "/Users/vol.inc/Projects/Own/geo-resolver:/src:rw"
     - "/Users/vol.inc/.nuget/packages:/home/app/.nuget/packages"
     - "/Users/vol.inc/.local/share/JetBrains/RiderRemoteDebugger/2025.3.0.4/LinuxArm64:/opt/JetBrains/RiderDebuggerTools"
     - "/Applications/Rider.app/Contents/bin/backend-log.xml:/etc/opt/JetBrains/RiderDebuggerTools/backend-log.xml"
-    - "/Users/vol.inc/Library/Logs/JetBrains/Rider2025.3/DebuggerWorker/JetBrains.Debugger.Worker.2025_12_14_15_07_36:/var/opt/JetBrains/RiderDebuggerTools:rw"
+    - "/Users/vol.inc/Library/Logs/JetBrains/Rider2025.3/DebuggerWorker/JetBrains.Debugger.Worker.2025_12_14_15_12_48:/var/opt/JetBrains/RiderDebuggerTools:rw"
     working_dir: "/app"
