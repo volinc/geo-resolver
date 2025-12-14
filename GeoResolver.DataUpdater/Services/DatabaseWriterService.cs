@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using GeoResolver.DataUpdater.Models;
 using Microsoft.Extensions.Logging;
@@ -12,44 +11,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
     private readonly ILogger<DatabaseWriterService>? _logger;
-    private static readonly Dictionary<string, string> Alpha3ToAlpha2Cache = new(StringComparer.OrdinalIgnoreCase);
 
     public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ILogger<DatabaseWriterService>? logger = null)
     {
         _npgsqlDataSource = npgsqlDataSource;
         _logger = logger;
-    }
-
-    private static string? Alpha3ToAlpha2(string alpha3Code)
-    {
-        if (string.IsNullOrWhiteSpace(alpha3Code) || alpha3Code.Length != 3)
-            return null;
-
-        // Check cache first
-        if (Alpha3ToAlpha2Cache.TryGetValue(alpha3Code, out var cached))
-            return cached;
-
-        // Try to get region info using .NET's built-in support
-        try
-        {
-            var regions = CultureInfo.GetCultures(CultureTypes.SpecificCultures)
-                .Select(c => new RegionInfo(c.Name))
-                .Where(r => r.ThreeLetterISORegionName.Equals(alpha3Code, StringComparison.OrdinalIgnoreCase));
-            
-            var region = regions.FirstOrDefault();
-            if (region != null)
-            {
-                var alpha2 = region.TwoLetterISORegionName;
-                Alpha3ToAlpha2Cache[alpha3Code] = alpha2;
-                return alpha2;
-            }
-        }
-        catch
-        {
-            // If RegionInfo fails, return null
-        }
-
-        return null;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -431,19 +397,8 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                     else if (idValue.Length == 3 && string.IsNullOrWhiteSpace(isoAlpha3Code))
                     {
                         isoAlpha3Code = idValue.ToUpperInvariant();
-                        // Try to get alpha-2 from alpha-3 if we don't have it
-                        if (string.IsNullOrWhiteSpace(isoAlpha2Code))
-                        {
-                            isoAlpha2Code = Alpha3ToAlpha2(idValue);
-                        }
                     }
                 }
-            }
-            
-            // If we have alpha-3 but not alpha-2, try to convert
-            if (string.IsNullOrWhiteSpace(isoAlpha2Code) && !string.IsNullOrWhiteSpace(isoAlpha3Code))
-            {
-                isoAlpha2Code = Alpha3ToAlpha2(isoAlpha3Code);
             }
             // If we have alpha-2 but not alpha-3, try to convert (reverse lookup would be complex, skip for now)
 
@@ -651,6 +606,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         int processed = 0;
         int skipped = 0;
+        var skippedReasons = new Dictionary<string, int>();
 
         foreach (var featureElement in features.EnumerateArray())
         {
@@ -714,12 +670,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 var alpha3Value = adm0A3.GetString();
                 if (!string.IsNullOrWhiteSpace(alpha3Value) && alpha3Value != "-99" && alpha3Value.Length == 3)
                     countryIsoAlpha3Code = alpha3Value.ToUpperInvariant();
-            }
-            
-            // If we have alpha-3 but not alpha-2, try to convert
-            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-            {
-                countryIsoAlpha2Code = Alpha3ToAlpha2(countryIsoAlpha3Code);
             }
 
             // At least one ISO code must be present
@@ -855,10 +805,36 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
                 processed++;
             }
-            catch
+            catch (PostgresException pgEx)
             {
-                // Skip invalid geometries
+                // Log database errors (constraint violations, etc.)
                 skipped++;
+                var reason = $"Database error: {pgEx.SqlState} - {pgEx.Message}";
+                if (!skippedReasons.ContainsKey(reason))
+                    skippedReasons[reason] = 0;
+                skippedReasons[reason]++;
+                
+                // Log first few errors for debugging
+                if (skipped <= 10)
+                {
+                    _logger?.LogWarning("Failed to insert region '{Identifier}' (country codes: alpha2={Alpha2}, alpha3={Alpha3}): {Error}", 
+                        identifier, countryIsoAlpha2Code ?? "NULL", countryIsoAlpha3Code ?? "NULL", pgEx.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Skip invalid geometries or other errors
+                skipped++;
+                var reason = $"Error: {ex.GetType().Name}";
+                if (!skippedReasons.ContainsKey(reason))
+                    skippedReasons[reason] = 0;
+                skippedReasons[reason]++;
+                
+                if (skipped <= 10)
+                {
+                    _logger?.LogWarning(ex, "Failed to insert region '{Identifier}' (country codes: alpha2={Alpha2}, alpha3={Alpha3})", 
+                        identifier, countryIsoAlpha2Code ?? "NULL", countryIsoAlpha3Code ?? "NULL");
+                }
             }
         }
 
@@ -866,6 +842,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
         
         // Log summary
         _logger?.LogInformation("Regions import: processed={Processed}, skipped={Skipped}", processed, skipped);
+        foreach (var reason in skippedReasons)
+        {
+            _logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
+        }
         
         // Query to check regions per country (for debugging)
         try
@@ -1027,12 +1007,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                 var alpha3Value = adm0A3.GetString();
                 if (!string.IsNullOrWhiteSpace(alpha3Value) && alpha3Value != "-99" && alpha3Value.Length == 3)
                     countryIsoAlpha3Code = alpha3Value.ToUpperInvariant();
-            }
-            
-            // If we have alpha-3 but not alpha-2, try to convert
-            if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-            {
-                countryIsoAlpha2Code = Alpha3ToAlpha2(countryIsoAlpha3Code);
             }
 
             // At least one ISO code must be present
