@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GeoResolver.Models;
+using ICU4N.Text;
 using Microsoft.Extensions.Logging;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.IO;
@@ -366,11 +367,40 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		foreach (var region in regions)
 		{
+			// If we have alpha-2 but not alpha-3, try to get alpha-3 from countries table
+			var countryIsoAlpha2Code = region.CountryIsoAlpha2Code;
+			var countryIsoAlpha3Code = region.CountryIsoAlpha3Code;
+
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+			{
+				try
+				{
+					await using var lookupCmd = new NpgsqlCommand(
+						"SELECT iso_alpha3_code FROM countries WHERE iso_alpha2_code = @alpha2Code LIMIT 1;",
+						connection, transaction);
+					lookupCmd.Parameters.AddWithValue("alpha2Code", countryIsoAlpha2Code);
+					var alpha3Result = await lookupCmd.ExecuteScalarAsync(cancellationToken);
+					if (alpha3Result != null && alpha3Result != DBNull.Value)
+					{
+						countryIsoAlpha3Code = alpha3Result.ToString();
+						_logger?.LogDebug("Resolved alpha-3 code {Alpha3} for alpha-2 code {Alpha2} from countries table",
+							countryIsoAlpha3Code, countryIsoAlpha2Code);
+					}
+				}
+				catch (Exception ex)
+				{
+					// Log but don't fail - we can still insert with just alpha-2
+					_logger?.LogDebug(ex,
+						"Failed to lookup alpha-3 code for alpha-2 {Alpha2} from countries table",
+						countryIsoAlpha2Code);
+				}
+			}
+
 			// Build query based on which codes are available
 			// Use partial unique indexes to handle NULL values properly
 			string insertQuery;
-			if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha2Code) &&
-			    !string.IsNullOrWhiteSpace(region.CountryIsoAlpha3Code))
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) &&
+			    !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 				insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
@@ -378,13 +408,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                     SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
                         name_latin = EXCLUDED.name_latin, 
                         geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha2Code))
+			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha3Code))
+			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 				insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, NULL, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
@@ -401,10 +431,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", region.Identifier);
 			cmd.Parameters.AddWithValue("name", region.NameLatin);
-			if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha2Code))
-				cmd.Parameters.AddWithValue("countryAlpha2Code", region.CountryIsoAlpha2Code);
-			if (!string.IsNullOrWhiteSpace(region.CountryIsoAlpha3Code))
-				cmd.Parameters.AddWithValue("countryAlpha3Code", region.CountryIsoAlpha3Code);
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
+				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+				cmd.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
 			cmd.Parameters.AddWithValue("geometry", NpgsqlDbType.Bytea, wkb);
 			await cmd.ExecuteNonQueryAsync(cancellationToken);
 		}
@@ -515,6 +545,32 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				continue;
 			}
 
+			// If we have alpha-2 but not alpha-3, try to get alpha-3 from countries table
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+			{
+				try
+				{
+					await using var lookupCmd = new NpgsqlCommand(
+						"SELECT iso_alpha3_code FROM countries WHERE iso_alpha2_code = @alpha2Code LIMIT 1;",
+						connection, transaction);
+					lookupCmd.Parameters.AddWithValue("alpha2Code", countryIsoAlpha2Code);
+					var alpha3Result = await lookupCmd.ExecuteScalarAsync(cancellationToken);
+					if (alpha3Result != null && alpha3Result != DBNull.Value)
+					{
+						countryIsoAlpha3Code = alpha3Result.ToString();
+						_logger?.LogDebug("Resolved alpha-3 code {Alpha3} for alpha-2 code {Alpha2} from countries table",
+							countryIsoAlpha3Code, countryIsoAlpha2Code);
+					}
+				}
+				catch (Exception ex)
+				{
+					// Log but don't fail - we can still insert with just alpha-2
+					_logger?.LogDebug(ex,
+						"Failed to lookup alpha-3 code for alpha-2 {Alpha2} from countries table",
+						countryIsoAlpha2Code);
+				}
+			}
+
 			// Get region name
 			var nameLatin = "Unknown";
 			if (properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
@@ -606,12 +662,27 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 			{
-				// Only alpha-2
-				insertQuery = @"
+				// Only alpha-2 (or alpha-3 was looked up from countries table)
+				if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+				{
+					// We have both codes now (alpha-3 was looked up)
+					insertQuery = @"
+                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
+                    ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
+                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
+                        name_latin = EXCLUDED.name_latin, 
+                        geometry = EXCLUDED.geometry;";
+				}
+				else
+				{
+					// Still only alpha-2 (lookup failed or not found)
+					insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
                     SET name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+				}
 			}
 			else
 			{
@@ -933,19 +1004,74 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Get city name
+			// Get city name - prioritize ASCII/English names to avoid Cyrillic and other non-Latin characters
+			// OSM/Geofabrik shapefile fields: nameascii (ASCII transliteration), name_en (English), name (original, can be any language)
 			var nameLatin = "Unknown";
 			if (properties.TryGetProperty("NAMEASCII", out var nameAsciiUpper) &&
 			    nameAsciiUpper.ValueKind == JsonValueKind.String)
-				nameLatin = nameAsciiUpper.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("nameascii", out var nameAscii) &&
-			         nameAscii.ValueKind == JsonValueKind.String)
-				nameLatin = nameAscii.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
-			         nameUpper.ValueKind == JsonValueKind.String)
-				nameLatin = nameUpper.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
-				nameLatin = name.GetString() ?? "Unknown";
+			{
+				var value = nameAsciiUpper.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value;
+			}
+
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("nameascii", out var nameAscii) &&
+			    nameAscii.ValueKind == JsonValueKind.String)
+			{
+				var value = nameAscii.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value;
+			}
+
+			// Fallback to English name if ASCII not available
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("name_en", out var nameEn) &&
+			    nameEn.ValueKind == JsonValueKind.String)
+			{
+				var value = nameEn.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value;
+			}
+
+			// Last resort: use original name, but only if it contains Latin characters
+			// This avoids importing Cyrillic, Arabic, Chinese, etc. names into name_latin field
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("NAME", out var nameUpper) &&
+			    nameUpper.ValueKind == JsonValueKind.String)
+			{
+				var value = nameUpper.GetString();
+				if (!string.IsNullOrWhiteSpace(value) && ContainsLatinCharacters(value))
+					nameLatin = value;
+			}
+
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			{
+				var value = name.GetString();
+				if (!string.IsNullOrWhiteSpace(value) && ContainsLatinCharacters(value))
+					nameLatin = value;
+			}
+
+			// Last resort: if no Latin name found, try to transliterate the original name using ICU
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
+			{
+				var originalValue = originalName.GetString();
+				if (!string.IsNullOrWhiteSpace(originalValue))
+				{
+					try
+					{
+						var transliterated = TransliterateToLatin(originalValue);
+						if (!string.IsNullOrWhiteSpace(transliterated) && ContainsLatinCharacters(transliterated))
+							nameLatin = transliterated;
+					}
+					catch (Exception ex)
+					{
+						_logger?.LogWarning(ex, "Failed to transliterate city name '{Name}' to Latin", originalValue);
+					}
+				}
+			}
 
 			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
 			{
@@ -955,7 +1081,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				continue;
 			}
 
+			// Get geometry JSON early - needed for spatial join
+			var geometryJson = geometryElement.GetRawText();
+
 			// Get region identifier (admin level 1) - optional
+			// First try to get from OSM/Natural Earth properties
 			// Support both Natural Earth and OSM formats for region identifier
 			// OSM: is_in:state, addr:state, is_in:province
 			// Natural Earth: ADM1NAME, adm1name
@@ -1016,6 +1146,67 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
+			// If region identifier not found in properties, try spatial join with regions table
+			// This is needed for OSM/Geofabrik data where region info is not in the shapefile
+			// We use ST_Centroid to find region by city center point, which works for both POINT and MULTIPOLYGON geometries
+			if (string.IsNullOrWhiteSpace(regionIdentifier))
+			{
+				try
+				{
+					// Use ST_Centroid to find region by city center, or ST_Intersects for polygon overlap
+					// Filter by country codes if available to speed up the query
+					string regionQuerySql;
+					if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) &&
+					    !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+						regionQuerySql = @"
+                        SELECT identifier 
+                        FROM regions 
+                        WHERE (country_iso_alpha2_code = @countryAlpha2Code OR country_iso_alpha3_code = @countryAlpha3Code)
+                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
+                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
+                        LIMIT 1;";
+					else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
+						regionQuerySql = @"
+                        SELECT identifier 
+                        FROM regions 
+                        WHERE country_iso_alpha2_code = @countryAlpha2Code
+                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
+                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
+                        LIMIT 1;";
+					else if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+						regionQuerySql = @"
+                        SELECT identifier 
+                        FROM regions 
+                        WHERE country_iso_alpha3_code = @countryAlpha3Code
+                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
+                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
+                        LIMIT 1;";
+					else
+						regionQuerySql = @"
+                        SELECT identifier 
+                        FROM regions 
+                        WHERE ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
+                           OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry))
+                        LIMIT 1;";
+
+					await using var regionQuery = new NpgsqlCommand(regionQuerySql, connection, transaction);
+					regionQuery.Parameters.AddWithValue("cityGeometry", NpgsqlDbType.Jsonb, geometryJson);
+					if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
+						regionQuery.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
+					if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+						regionQuery.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
+
+					var regionResult = await regionQuery.ExecuteScalarAsync(cancellationToken);
+					if (regionResult != null && regionResult != DBNull.Value)
+						regionIdentifier = regionResult.ToString();
+				}
+				catch (Exception ex)
+				{
+					// Log but don't fail - region identifier is optional
+					_logger?.LogDebug(ex, "Failed to find region for city {CityName} via spatial join", nameLatin);
+				}
+			}
+
 			// Generate city identifier - use nameascii + country code, or geonames_id if available
 			string identifier;
 			if (properties.TryGetProperty("GEONAMEID", out var geonameIdUpper) &&
@@ -1034,9 +1225,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			identifier = Regex.Replace(identifier, @"[^a-zA-Z0-9_]", "_");
 			identifier = Regex.Replace(identifier, @"_+", "_");
 			identifier = identifier.Trim('_');
-
-			// For cities, geometry is typically a Point (but we store as MULTIPOLYGON for future use with polygon boundaries)
-			var geometryJson = geometryElement.GetRawText();
 
 			// Build the INSERT query dynamically based on which codes we have
 			string insertQuery;
@@ -1327,6 +1515,33 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var approximateOffsetHours = (int) Math.Round(longitude / 15.0);
 		var approximateOffsetSeconds = approximateOffsetHours * 3600;
 		return (approximateOffsetSeconds, 0);
+	}
+
+	private static bool ContainsLatinCharacters(string text)
+	{
+		// Check if string contains at least one Latin character (A-Z, a-z)
+		// This helps filter out names in Cyrillic, Arabic, Chinese, etc.
+		return text.Any(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+	}
+
+	private static string? TransliterateToLatin(string text)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+			return null;
+
+		try
+		{
+			// Try common transliteration rules
+			// ICU supports various transliteration IDs like "Cyrillic-Latin", "Any-Latin", etc.
+			// "Any-Latin; Latin-ASCII" attempts to transliterate any script to Latin, then to ASCII
+			var transliterator = Transliterator.GetInstance("Any-Latin; Latin-ASCII");
+			return transliterator.Transliterate(text);
+		}
+		catch
+		{
+			// If ICU transliteration fails, return null
+			return null;
+		}
 	}
 
 	private static (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)

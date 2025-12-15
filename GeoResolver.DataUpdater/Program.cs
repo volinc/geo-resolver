@@ -46,6 +46,7 @@ services.Configure<CityLoaderOptions>(configuration.GetSection("CityLoader"));
 
 // Register services
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
+services.AddSingleton<GeofabrikRegionPathResolver>();
 services.AddSingleton<NaturalEarthShapefileLoader>();
 services.AddSingleton<OsmCityShapefileLoader>();
 services.AddSingleton<IDataLoader, DataLoader>();

@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -17,6 +19,7 @@ public sealed class OsmCityShapefileLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly NpgsqlDataSource _dataSource;
+	private readonly GeofabrikRegionPathResolver _geofabrikRegionPathResolver;
 	private readonly IHttpClientFactory _httpClientFactory;
 	private readonly ILogger<OsmCityShapefileLoader> _logger;
 	private readonly IOptions<CityLoaderOptions> _options;
@@ -26,13 +29,15 @@ public sealed class OsmCityShapefileLoader
 		IHttpClientFactory httpClientFactory,
 		IDatabaseWriterService databaseWriterService,
 		IOptions<CityLoaderOptions> options,
-		NpgsqlDataSource dataSource)
+		NpgsqlDataSource dataSource,
+		GeofabrikRegionPathResolver geofabrikRegionPathResolver)
 	{
 		_logger = logger;
 		_httpClientFactory = httpClientFactory;
 		_databaseWriterService = databaseWriterService;
 		_options = options;
 		_dataSource = dataSource;
+		_geofabrikRegionPathResolver = geofabrikRegionPathResolver;
 	}
 
 	/// <summary>
@@ -97,18 +102,22 @@ public sealed class OsmCityShapefileLoader
 		_logger.LogInformation("=== [Cities] Starting to load cities for country {CountryIso2} ===",
 			countryIsoAlpha2Code);
 
-		var urls = BuildGeofabrikUrls(countryIsoAlpha2Code);
-		if (urls.Count == 0)
+		var regionPaths = _geofabrikRegionPathResolver.GetRegionPaths(countryIsoAlpha2Code);
+		if (regionPaths.Count == 0)
 		{
-			_logger.LogWarning("No Geofabrik URLs configured for country {CountryIso2} – skipping", countryIsoAlpha2Code);
+			_logger.LogWarning("No Geofabrik region paths configured for country {CountryIso2} – skipping", countryIsoAlpha2Code);
 			return;
 		}
 
-		if (urls.Count == 1)
+		var urls = regionPaths
+			.Select(p => $"https://download.geofabrik.de/{p}-latest-free.shp.zip")
+			.ToArray();
+
+		if (urls.Length == 1)
 			_logger.LogInformation("Using Geofabrik URL for {CountryIso2}: {Url}", countryIsoAlpha2Code, urls[0]);
 		else
 			_logger.LogInformation("Using {Count} Geofabrik regional URLs for {CountryIso2}: {Urls}",
-				urls.Count, countryIsoAlpha2Code, string.Join(", ", urls));
+				urls.Length, countryIsoAlpha2Code, string.Join(", ", urls));
 
 		Exception? lastException;
 
@@ -118,7 +127,7 @@ public sealed class OsmCityShapefileLoader
 			httpClient.Timeout = TimeSpan.FromMinutes(20);
 
 			// Если один URL – сохраняем прежнюю последовательную логику
-			if (urls.Count == 1)
+			if (urls.Length == 1)
 			{
 				var success =
 					await DownloadAndProcessCityZipAsync(urls[0], countryIsoAlpha2Code, httpClient, cancellationToken);
@@ -167,25 +176,90 @@ public sealed class OsmCityShapefileLoader
 	{
 		try
 		{
-			var downloadStopwatch = Stopwatch.StartNew();
-			var response =
-				await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+			// Get cache directory
+			var cacheDir = Path.Combine(Directory.GetCurrentDirectory(), "cache", "geofabrik");
+			Directory.CreateDirectory(cacheDir);
 
-			if (!response.IsSuccessStatusCode)
+			// Generate cache file name from URL
+			var urlHash = ComputeSha256Hash(url);
+			var cacheFile = Path.Combine(cacheDir, $"{urlHash}.zip");
+			var cacheMetaFile = Path.Combine(cacheDir, $"{urlHash}.meta");
+
+			Stream? zipStream = null;
+			var downloadStopwatch = Stopwatch.StartNew();
+			var needsDownload = true;
+
+			// Check if cached file exists and is up-to-date
+			if (File.Exists(cacheFile) && File.Exists(cacheMetaFile))
 			{
-				_logger.LogError("Failed to download Geofabrik shapefile for {CountryIso2} from {Url}: {StatusCode}",
-					countryIsoAlpha2Code, url, response.StatusCode);
-				return false;
+				var cachedEtag = await File.ReadAllTextAsync(cacheMetaFile, cancellationToken);
+				if (!string.IsNullOrWhiteSpace(cachedEtag))
+				{
+					// Check if file on server has changed using conditional request
+					using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+					headRequest.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{cachedEtag.Trim()}\""));
+					
+					try
+					{
+						var headResponse = await httpClient.SendAsync(headRequest, cancellationToken);
+						if (headResponse.StatusCode == System.Net.HttpStatusCode.NotModified)
+						{
+							_logger.LogInformation(
+								"Using cached shapefile for {CountryIso2} from {Url} (ETag: {ETag})",
+								countryIsoAlpha2Code, url, cachedEtag.Trim());
+							zipStream = File.OpenRead(cacheFile);
+							needsDownload = false;
+							downloadStopwatch.Stop();
+						}
+					}
+					catch (Exception ex)
+					{
+						_logger.LogWarning(ex, "Failed to check ETag for {Url}, will download", url);
+					}
+				}
 			}
 
-			await using var zipStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-			downloadStopwatch.Stop();
-			_logger.LogInformation(
-				"Downloaded shapefile for {CountryIso2} from {Url} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
-				countryIsoAlpha2Code, url, downloadStopwatch.ElapsedMilliseconds,
-				downloadStopwatch.Elapsed.TotalSeconds);
+			// Download if needed
+			if (needsDownload)
+			{
+				var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
-			await ProcessCityShapefileZipAsync(zipStream, countryIsoAlpha2Code, cancellationToken);
+				if (!response.IsSuccessStatusCode)
+				{
+					_logger.LogError("Failed to download Geofabrik shapefile for {CountryIso2} from {Url}: {StatusCode}",
+						countryIsoAlpha2Code, url, response.StatusCode);
+					return false;
+				}
+
+				// Save ETag for future cache checks
+				var etag = response.Headers.ETag?.Tag;
+				if (!string.IsNullOrWhiteSpace(etag))
+				{
+					await File.WriteAllTextAsync(cacheMetaFile, etag, cancellationToken);
+				}
+
+				// Download to cache file
+				await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+				await using var fileStream = File.Create(cacheFile);
+				await responseStream.CopyToAsync(fileStream, cancellationToken);
+				
+				downloadStopwatch.Stop();
+				_logger.LogInformation(
+					"Downloaded shapefile for {CountryIso2} from {Url} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s) and cached to {CacheFile}",
+					countryIsoAlpha2Code, url, downloadStopwatch.ElapsedMilliseconds,
+					downloadStopwatch.Elapsed.TotalSeconds, cacheFile);
+				
+				zipStream = File.OpenRead(cacheFile);
+			}
+
+			if (zipStream != null)
+			{
+				await using (zipStream)
+				{
+					await ProcessCityShapefileZipAsync(zipStream, countryIsoAlpha2Code, cancellationToken);
+				}
+			}
+			
 			return true;
 		}
 		catch (InvalidDataException ex)
@@ -202,6 +276,13 @@ public sealed class OsmCityShapefileLoader
 				url, countryIsoAlpha2Code);
 			return false;
 		}
+	}
+
+	private static string ComputeSha256Hash(string input)
+	{
+		var bytes = Encoding.UTF8.GetBytes(input);
+		var hashBytes = SHA256.HashData(bytes);
+		return Convert.ToHexString(hashBytes).ToLowerInvariant();
 	}
 
 	private async Task ProcessCityShapefileZipAsync(Stream zipStream, string countryIsoAlpha2Code,
@@ -302,74 +383,6 @@ public sealed class OsmCityShapefileLoader
 		}
 	}
 
-	private static IReadOnlyList<string> BuildGeofabrikUrls(string countryIsoAlpha2Code)
-	{
-		// Hard-coded mapping from ISO alpha-2 to Geofabrik path.
-		// For many countries Geofabrik uses a single shapefile per country:
-		//   /europe/{country}-latest-free.shp.zip etc.
-		// For some large countries (e.g. RU) only regional shapefiles exist,
-		// so we provide a list of regional paths and merge them.
-
-		var code = countryIsoAlpha2Code.ToUpperInvariant();
-
-		// Special case: Russia – only regional shapefiles, no single country-wide shapefile
-		if (code == "RU")
-		{
-			// Список федеральных округов России на Geofabrik.
-			// Каждый из этих путей даёт свой *-latest-free.shp.zip.
-			var regionPaths = new[]
-			{
-				"russia/central-fed-district",
-				"russia/northwestern-fed-district",
-				"russia/siberian-fed-district",
-				"russia/ural-fed-district",
-				"russia/far-eastern-fed-district",
-				"russia/volga-fed-district",
-				"russia/south-fed-district",
-				"russia/north-caucasus-fed-district"
-			};
-
-			return regionPaths
-				.Select(p => $"https://download.geofabrik.de/{p}-latest-free.shp.zip")
-				.ToArray();
-		}
-
-		// Default: single country-level shapefile
-		var path = code switch
-		{
-			"DE" => "europe/germany",
-			"FR" => "europe/france",
-			"IT" => "europe/italy",
-			"ES" => "europe/spain",
-			"PT" => "europe/portugal",
-			"PL" => "europe/poland",
-			"NL" => "europe/netherlands",
-			"BE" => "europe/belgium",
-			"LU" => "europe/luxembourg",
-			"AT" => "europe/austria",
-			"CH" => "europe/switzerland",
-			"CZ" => "europe/czech-republic",
-			"SK" => "europe/slovakia",
-			"HU" => "europe/hungary",
-			"SI" => "europe/slovenia",
-			"HR" => "europe/croatia",
-			"RS" => "europe/serbia",
-			"BA" => "europe/bosnia-herzegovina",
-			"ME" => "europe/montenegro",
-			"AL" => "europe/albania",
-			"MK" => "europe/macedonia",
-			"GR" => "europe/greece",
-			"BG" => "europe/bulgaria",
-			"RO" => "europe/romania",
-			// Ukraine, Belarus – country-level shapefiles exist
-			"UA" => "europe/ukraine",
-			"BY" => "europe/belarus",
-			// Fallback: try using "europe/{lowercase-name}" is not possible without mapping, so default to continent-level
-			_ => "europe"
-		};
-
-		return new[] {$"https://download.geofabrik.de/{path}-latest-free.shp.zip"};
-	}
 
 	private async Task<string[]> GetAllCountryIso2FromDatabaseAsync(CancellationToken cancellationToken)
 	{
