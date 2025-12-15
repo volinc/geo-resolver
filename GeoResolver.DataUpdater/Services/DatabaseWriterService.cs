@@ -1547,11 +1547,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		try
 		{
 			// Get cities with non-Latin names (or names that need transliteration)
+			// Check for names that contain characters outside basic ASCII Latin range
+			// Simplified regex: check for any character that is NOT in [A-Za-z0-9 space hyphen dot]
 			await using var selectCmd = new NpgsqlCommand(@"
                 SELECT id, name_latin, country_iso_alpha2_code, country_iso_alpha3_code
                 FROM cities
                 WHERE name_latin IS NOT NULL
-                  AND NOT (name_latin ~ '^[A-Za-z0-9\s\-\.\']+$') -- Contains non-Latin characters
+                  AND name_latin ~ '[^A-Za-z0-9 -.]' -- Contains non-Latin characters (simplified pattern)
                 LIMIT 10000;", connection); // Process in batches to avoid memory issues
 			selectCmd.CommandTimeout = 60;
 

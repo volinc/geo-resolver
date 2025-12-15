@@ -516,8 +516,11 @@ public sealed class OsmCityShapefileLoader
 		// - fclass IN ('city', 'town', 'national_capital') - официальные города и крупные поселки
 		// - ИЛИ population >= 10000 - населенные пункты с населением >= 10000
 		// Это исключает деревни (village), хутора (hamlet), пригороды (suburb) и т.д.
+		// var whereClause =
+		// 	"fclass IN ('city', 'town', 'national_capital') OR population >= 10000";
+
 		var whereClause =
-			"fclass IN ('city', 'town', 'national_capital') OR population >= 10000";
+			"fclass IN ('city', 'town', 'national_capital') OR population >= 100000";
 
 		try
 		{
