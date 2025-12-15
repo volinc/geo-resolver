@@ -1,8 +1,5 @@
 namespace GeoResolver.Models;
 
-/// <summary>
-/// Database model for countries
-/// </summary>
 public sealed class CountryEntity
 {
     public int Id { get; set; }
@@ -12,9 +9,6 @@ public sealed class CountryEntity
     public required NetTopologySuite.Geometries.Geometry Geometry { get; set; }
 }
 
-/// <summary>
-/// Database model for regions (admin level 1)
-/// </summary>
 public sealed class RegionEntity
 {
     public int Id { get; set; }
@@ -25,9 +19,6 @@ public sealed class RegionEntity
     public required NetTopologySuite.Geometries.Geometry Geometry { get; set; }
 }
 
-/// <summary>
-/// Database model for cities
-/// </summary>
 public sealed class CityEntity
 {
     public int Id { get; set; }
@@ -39,9 +30,6 @@ public sealed class CityEntity
     public required NetTopologySuite.Geometries.Geometry Geometry { get; set; }
 }
 
-/// <summary>
-/// Database model for timezones
-/// </summary>
 public sealed class TimezoneEntity
 {
     public int Id { get; set; }

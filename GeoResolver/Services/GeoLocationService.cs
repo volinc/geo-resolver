@@ -1,5 +1,4 @@
 using GeoResolver.Models;
-using Microsoft.Extensions.Logging;
 using Npgsql;
 using NetTopologySuite.Geometries;
 using NpgsqlTypes;

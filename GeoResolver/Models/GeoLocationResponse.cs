@@ -1,25 +1,21 @@
 namespace GeoResolver.Models;
 
-/// <summary>
-/// Response model for geo-location lookup
-/// </summary>
-public record GeoLocationResponse
+public sealed record GeoLocationResponse
 {
     /// <summary>
     /// ISO 3166-1 alpha-2 country code (e.g., "US", "RU", "GB")
-    /// Optional - may be null if the point is not within any country's territory (e.g., Antarctica, international waters)
     /// </summary>
     public string? CountryIsoAlpha2Code { get; init; }
 
     /// <summary>
     /// ISO 3166-1 alpha-3 country code (e.g., "USA", "RUS", "GBR")
-    /// Optional - may be null if the point is not within any country's territory or if country only has alpha-2 code
+    /// Required if the point is within a country's territory
     /// </summary>
     public string? CountryIsoAlpha3Code { get; init; }
 
     /// <summary>
-    /// Country name in Latin transliteration (invariant)
-    /// Optional - may be null if the point is not within any country's territory (e.g., Antarctica, international waters)
+    /// Country name in Latin transliteration (invariant) or translation into English
+    /// Required if the point is within a country's territory
     /// </summary>
     public string? CountryNameLatin { get; init; }
 
@@ -47,13 +43,11 @@ public record GeoLocationResponse
 
     /// <summary>
     /// Raw timezone offset from UTC in seconds (without DST)
-    /// Similar to Google Timezone API RawOffset
     /// </summary>
     public int TimezoneRawOffsetSeconds { get; init; }
 
     /// <summary>
     /// Daylight Saving Time offset from UTC in seconds
-    /// Similar to Google Timezone API DstOffset
     /// </summary>
     public int TimezoneDstOffsetSeconds { get; init; }
 
