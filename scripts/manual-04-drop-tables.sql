@@ -1,6 +1,6 @@
 -- Script to drop all tables, indexes and objects created by manual-03-create-tables.sql
 -- This script is idempotent and can be safely run multiple times
--- For MANUAL execution: psql -U postgres -d georesolver -f scripts/manual-04-drop-tables.sql
+-- For MANUAL execution: psql -U postgres -d geo_resolver -f scripts/manual-04-drop-tables.sql
 
 -- Drop tables in reverse dependency order
 DROP TABLE IF EXISTS timezones CASCADE;

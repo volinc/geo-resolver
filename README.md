@@ -47,13 +47,13 @@ chmod +x scripts/setup-database.sh
 psql -U postgres -f scripts/manual-01-create-user-and-database.sql
 
 # 2. Включить PostGIS
-psql -U postgres -d georesolver -f scripts/manual-02-enable-postgis.sql
+psql -U postgres -d geo_resolver -f scripts/manual-02-enable-postgis.sql
 
 # 3. Создать таблицы и индексы
-psql -U postgres -d georesolver -f scripts/manual-03-create-tables.sql
+psql -U postgres -d geo_resolver -f scripts/manual-03-create-tables.sql
 
 # Для удаления таблиц (опционально):
-# psql -U postgres -d georesolver -f scripts/manual-04-drop-tables.sql
+# psql -U postgres -d geo_resolver -f scripts/manual-04-drop-tables.sql
 ```
 
 ### 2. Настройка подключения к базе данных
@@ -65,9 +65,9 @@ psql -U postgres -d georesolver -f scripts/manual-03-create-tables.sql
   "Database": {
     "Host": "localhost",
     "Port": "5432",
-    "Name": "georesolver",
-    "Username": "georesolver",
-    "Password": "georesolver_password"
+    "Name": "geo_resolver",
+    "Username": "geo_resolver",
+    "Password": "pass"
   }
 }
 ```
@@ -77,8 +77,8 @@ psql -U postgres -d georesolver -f scripts/manual-03-create-tables.sql
 ```bash
 export Database__Host=localhost
 export Database__Port=5432
-export Database__Name=georesolver
-export Database__Username=georesolver
+export Database__Name=geo_resolver
+export Database__Username=geo_resolver
 export Database__Password=your_password
 ```
 
@@ -167,14 +167,14 @@ dotnet run --project GeoResolver.DataUpdater
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=georesolver;Username=georesolver;Password=georesolver_password"
+    "DefaultConnection": "Host=localhost;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=pass"
   }
 }
 ```
 
 Или через переменную окружения:
 ```bash
-export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=georesolver;Username=georesolver;Password=your_password"
+export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=your_password"
 ```
 
 **Источники данных:**

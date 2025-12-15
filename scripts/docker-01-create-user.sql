@@ -11,5 +11,5 @@ BEGIN
 END
 $$;
 
--- Set georesolver as owner of the database
+-- Set geo_resolver as owner of the database
 ALTER DATABASE geo_resolver OWNER TO geo_resolver;

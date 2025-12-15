@@ -78,9 +78,9 @@ CREATE TABLE IF NOT EXISTS timezones (
 -- Create indexes for timezones
 CREATE INDEX IF NOT EXISTS idx_timezones_geometry ON timezones USING GIST (geometry);
 
--- Grant privileges on tables to georesolver user
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO georesolver;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO georesolver;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO georesolver;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO georesolver;
+-- Grant privileges on tables to geo_resolver user
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO geo_resolver;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO geo_resolver;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO geo_resolver;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO geo_resolver;
 
