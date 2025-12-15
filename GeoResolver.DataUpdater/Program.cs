@@ -24,15 +24,12 @@ var services = new ServiceCollection();
 // Configure logging
 var logFileName = $"georesolver-dataupdater-{DateTime.Now:yyyyMMdd-HHmmss}.log";
 var logFilePath = Path.Combine(Directory.GetCurrentDirectory(), "logs", logFileName);
-
 services.AddLogging(builder =>
 {
 	builder.AddConsole();
 	builder.AddFile(logFilePath);
 	builder.SetMinimumLevel(LogLevel.Information);
 });
-
-// Log the log file path
 Console.WriteLine($"Logging to file: {logFilePath}");
 
 // Configure database
