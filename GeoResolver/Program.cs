@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
-using GeoResolver.Models;
-using GeoResolver.Services;
+using GeoResolver;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Npgsql;
 
@@ -19,7 +18,7 @@ dataSourceBuilder.UseNetTopologySuite();
 var dataSource = dataSourceBuilder.Build();
 
 builder.Services.AddSingleton(dataSource);
-builder.Services.AddSingleton<IGeoLocationService, GeoLocationService>();
+builder.Services.AddSingleton<GeoLocationService>();
 
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database", tags: ["database"]);
@@ -34,7 +33,7 @@ app.UseHealthChecks("/health", new HealthCheckOptions
 app.MapGet("/api/geolocation", async (
     double latitude,
     double longitude,
-    IGeoLocationService geoLocationService,
+    GeoLocationService geoLocationService,
     CancellationToken cancellationToken) =>
 {
     if (latitude is < -90 or > 90)

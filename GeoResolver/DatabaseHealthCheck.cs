@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Npgsql;
 
-namespace GeoResolver.Services;
+namespace GeoResolver;
 
 public sealed class DatabaseHealthCheck : IHealthCheck
 {

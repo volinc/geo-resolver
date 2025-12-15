@@ -16,5 +16,9 @@
     <PackageReference Include="NodaTime" Version="3.2.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\GeoResolver.Models\GeoResolver.Models.csproj" />
+  </ItemGroup>
+
 </Project>
 

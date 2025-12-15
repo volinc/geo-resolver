@@ -1,12 +1,12 @@
 using GeoResolver.Models;
-using Npgsql;
 using NetTopologySuite.Geometries;
-using NpgsqlTypes;
 using NodaTime;
+using Npgsql;
+using NpgsqlTypes;
 
-namespace GeoResolver.Services;
+namespace GeoResolver;
 
-public sealed class GeoLocationService : IGeoLocationService
+public sealed class GeoLocationService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
     private readonly ILogger<GeoLocationService>? _logger;
@@ -17,6 +17,10 @@ public sealed class GeoLocationService : IGeoLocationService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Resolves geo-location information for given coordinates
+    /// Always returns a response with timezone data (required), country/region/city data is optional
+    /// </summary>
     public async Task<GeoLocationResponse> ResolveAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
         var countryTask = FindCountryByPointAsync(latitude, longitude, cancellationToken);
@@ -48,7 +52,7 @@ public sealed class GeoLocationService : IGeoLocationService
         };
     }
 
-    private async Task<CountryEntity?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    private async Task<Country?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
         await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
@@ -65,7 +69,7 @@ public sealed class GeoLocationService : IGeoLocationService
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken))
         {
-            return new CountryEntity
+            return new Country
             {
                 Id = reader.GetInt32(0),
                 IsoAlpha2Code = reader.IsDBNull(1) ? null : reader.GetString(1),
@@ -78,7 +82,7 @@ public sealed class GeoLocationService : IGeoLocationService
         return null;
     }
 
-    private async Task<RegionEntity?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    private async Task<Region?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
         await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
@@ -95,7 +99,7 @@ public sealed class GeoLocationService : IGeoLocationService
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken))
         {
-            return new RegionEntity
+            return new Region
             {
                 Id = reader.GetInt32(0),
                 Identifier = reader.GetString(1),
@@ -109,7 +113,7 @@ public sealed class GeoLocationService : IGeoLocationService
         return null;
     }
 
-    private async Task<CityEntity?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    private async Task<City?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
         await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
@@ -126,7 +130,7 @@ public sealed class GeoLocationService : IGeoLocationService
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken))
         {
-            return new CityEntity
+            return new City
             {
                 Id = reader.GetInt32(0),
                 Identifier = reader.GetString(1),
