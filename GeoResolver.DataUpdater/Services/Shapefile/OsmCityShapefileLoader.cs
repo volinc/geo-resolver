@@ -1,0 +1,382 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO.Compression;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Npgsql;
+
+namespace GeoResolver.DataUpdater.Services.Shapefile;
+
+/// <summary>
+///     Loads and processes OSM-based city polygon data from Geofabrik Shapefiles.
+///     For each configured country (2-letter ISO code) downloads the corresponding
+///     regional/country shapefile ZIP, extracts the city polygon layer and imports
+///     it into the <c>cities</c> table.
+/// </summary>
+public sealed class OsmCityShapefileLoader
+{
+	private readonly IDatabaseWriterService _databaseWriterService;
+	private readonly IHttpClientFactory _httpClientFactory;
+	private readonly ILogger<OsmCityShapefileLoader> _logger;
+	private readonly IConfiguration _configuration;
+	private readonly NpgsqlDataSource _dataSource;
+
+	public OsmCityShapefileLoader(
+		ILogger<OsmCityShapefileLoader> logger,
+		IHttpClientFactory httpClientFactory,
+		IDatabaseWriterService databaseWriterService,
+		IConfiguration configuration,
+		NpgsqlDataSource dataSource)
+	{
+		_logger = logger;
+		_httpClientFactory = httpClientFactory;
+		_databaseWriterService = databaseWriterService;
+		_configuration = configuration;
+		_dataSource = dataSource;
+	}
+
+	/// <summary>
+	///     Loads cities for all countries listed in configuration section "CityLoader:Countries"
+	///     (array of 2-letter ISO country codes, e.g. ["DE", "FR", "RU"]).
+	/// </summary>
+	public async Task LoadAllConfiguredCountriesAsync(CancellationToken cancellationToken = default)
+	{
+		var configuredCodes = _configuration.GetSection("CityLoader:Countries").Get<string[]>() ?? Array.Empty<string>();
+
+		string[] countryCodes;
+		if (configuredCodes.Length == 0)
+		{
+			_logger.LogInformation(
+				"CityLoader:Countries is empty or not configured – will use all countries from 'countries' table");
+			countryCodes = await GetAllCountryIso2FromDatabaseAsync(cancellationToken);
+		}
+		else
+		{
+			countryCodes = configuredCodes;
+		}
+
+		_logger.LogInformation("Starting OSM city loading for {Count} countries: {Countries}",
+			countryCodes.Length, string.Join(", ", countryCodes));
+
+		foreach (var rawCode in countryCodes)
+		{
+			var code = rawCode.Trim().ToUpperInvariant();
+			if (string.IsNullOrWhiteSpace(code) || code.Length != 2)
+			{
+				_logger.LogWarning("Skipping invalid country code in CityLoader:Countries: '{Code}'", rawCode);
+				continue;
+			}
+
+			try
+			{
+				await LoadCitiesForCountryAsync(code, cancellationToken);
+			}
+			catch (Exception ex)
+			{
+				// Не прерываем общий процесс по одной стране, но логируем ошибку.
+				_logger.LogError(ex, "Failed to load cities for country {CountryIso2}", code);
+			}
+		}
+
+		_logger.LogInformation("Finished OSM city loading for all configured countries");
+	}
+
+	/// <summary>
+	///     Loads cities for a single country (2-letter ISO code) from the appropriate Geofabrik shapefile.
+	/// </summary>
+	private async Task LoadCitiesForCountryAsync(string countryIsoAlpha2Code,
+		CancellationToken cancellationToken = default)
+	{
+		if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) || countryIsoAlpha2Code.Length != 2)
+			throw new ArgumentException("Country ISO alpha-2 code must be 2-letter non-empty string",
+				nameof(countryIsoAlpha2Code));
+
+		countryIsoAlpha2Code = countryIsoAlpha2Code.ToUpperInvariant();
+
+		var overallStopwatch = Stopwatch.StartNew();
+		_logger.LogInformation("=== [Cities] Starting to load cities for country {CountryIso2} ===",
+			countryIsoAlpha2Code);
+
+		var url = BuildGeofabrikUrl(countryIsoAlpha2Code);
+		_logger.LogInformation("Using Geofabrik URL for {CountryIso2}: {Url}", countryIsoAlpha2Code, url);
+
+		Exception? lastException;
+
+		try
+		{
+			using var httpClient = _httpClientFactory.CreateClient();
+			httpClient.Timeout = TimeSpan.FromMinutes(20);
+
+			var downloadStopwatch = Stopwatch.StartNew();
+			var response =
+				await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+			if (!response.IsSuccessStatusCode)
+			{
+				_logger.LogError("Failed to download Geofabrik shapefile for {CountryIso2} from {Url}: {StatusCode}",
+					countryIsoAlpha2Code, url, response.StatusCode);
+				throw new InvalidOperationException(
+					$"Failed to download Geofabrik shapefile for {countryIsoAlpha2Code}: {response.StatusCode}");
+			}
+
+			await using var zipStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+			downloadStopwatch.Stop();
+			_logger.LogInformation(
+				"Downloaded shapefile for {CountryIso2} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
+				countryIsoAlpha2Code, downloadStopwatch.ElapsedMilliseconds, downloadStopwatch.Elapsed.TotalSeconds);
+
+			await ProcessCityShapefileZipAsync(zipStream, countryIsoAlpha2Code, cancellationToken);
+
+			overallStopwatch.Stop();
+			_logger.LogInformation(
+				"=== [Cities] Successfully loaded cities for {CountryIso2} in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes) ===",
+				countryIsoAlpha2Code, overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
+			return;
+		}
+		catch (HttpRequestException ex)
+		{
+			lastException = ex;
+			_logger.LogError(ex, "HTTP error while downloading Geofabrik shapefile for {CountryIso2} from {Url}",
+				countryIsoAlpha2Code, url);
+		}
+		catch (Exception ex)
+		{
+			lastException = ex;
+			_logger.LogError(ex, "Unexpected error while loading cities for {CountryIso2}", countryIsoAlpha2Code);
+		}
+
+		overallStopwatch.Stop();
+		throw new InvalidOperationException(
+			$"Failed to load OSM/Geofabrik cities for country {countryIsoAlpha2Code}", lastException);
+	}
+
+	private async Task ProcessCityShapefileZipAsync(Stream zipStream, string countryIsoAlpha2Code,
+		CancellationToken cancellationToken)
+	{
+		var overallStopwatch = Stopwatch.StartNew();
+		_logger.LogInformation("Extracting and processing Geofabrik city polygons ZIP for {CountryIso2}...",
+			countryIsoAlpha2Code);
+
+		var tempDir = Path.Combine(Path.GetTempPath(), $"geo-resolver-osm-cities-{countryIsoAlpha2Code}-{Guid.NewGuid()}");
+		Directory.CreateDirectory(tempDir);
+
+		try
+		{
+			// Extract ZIP
+			var extractStopwatch = Stopwatch.StartNew();
+			await using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, false))
+			{
+				foreach (var entry in archive.Entries)
+				{
+					var fullPath = Path.Combine(tempDir, entry.FullName);
+					var directory = Path.GetDirectoryName(fullPath);
+					if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+						Directory.CreateDirectory(directory);
+
+					if (!string.IsNullOrEmpty(entry.Name))
+					{
+						await using var entryStream = await entry.OpenAsync(cancellationToken);
+						await using var fileStream = File.Create(fullPath);
+						await entryStream.CopyToAsync(fileStream, cancellationToken);
+					}
+				}
+			}
+
+			extractStopwatch.Stop();
+			_logger.LogInformation(
+				"ZIP archive for {CountryIso2} extracted to {TempDir} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
+				countryIsoAlpha2Code, tempDir, extractStopwatch.ElapsedMilliseconds,
+				extractStopwatch.Elapsed.TotalSeconds);
+
+			// Find city polygon shapefile, typically gis_osm_places_a_free_1.shp
+			var shpFile = Directory.GetFiles(tempDir, "gis_osm_places_a_*_1.shp", SearchOption.AllDirectories)
+				              .FirstOrDefault()
+			              ?? Directory.GetFiles(tempDir, "*places_a*.shp", SearchOption.AllDirectories).FirstOrDefault()
+			              ?? Directory.GetFiles(tempDir, "*.shp", SearchOption.AllDirectories).FirstOrDefault();
+
+			if (shpFile == null)
+			{
+				var allFiles = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
+				_logger.LogError(
+					"No city polygon shapefile (gis_osm_places_a_*.shp) found in Geofabrik ZIP for {CountryIso2}. Files found: {Count}",
+					countryIsoAlpha2Code, allFiles.Length);
+				foreach (var file in allFiles.Take(30))
+					_logger.LogError("  Found file: {File}", Path.GetRelativePath(tempDir, file));
+
+				throw new FileNotFoundException(
+					"City polygon shapefile (gis_osm_places_a_*.shp) not found in Geofabrik ZIP archive");
+			}
+
+			_logger.LogInformation("Found city polygon shapefile for {CountryIso2}: {ShpFile}",
+				countryIsoAlpha2Code, shpFile);
+
+			// Convert Shapefile to GeoJSON using ogr2ogr (same approach as NaturalEarthShapefileLoader)
+			var convertStopwatch = Stopwatch.StartNew();
+			var geoJson = await ConvertShapefileToGeoJsonAsync(shpFile, cancellationToken);
+			convertStopwatch.Stop();
+			_logger.LogInformation(
+				"Shapefile for {CountryIso2} converted to GeoJSON in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)",
+				countryIsoAlpha2Code, convertStopwatch.ElapsedMilliseconds, convertStopwatch.Elapsed.TotalMinutes);
+
+			// Import into database; pass default country ISO2 code so it can be used if attributes miss ISO
+			var importStopwatch = Stopwatch.StartNew();
+			_logger.LogInformation("Importing cities for {CountryIso2} into database...", countryIsoAlpha2Code);
+			await _databaseWriterService.ImportCitiesFromGeoJsonAsync(geoJson, countryIsoAlpha2Code, cancellationToken);
+			importStopwatch.Stop();
+			_logger.LogInformation(
+				"Cities for {CountryIso2} imported to database in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
+				countryIsoAlpha2Code, importStopwatch.ElapsedMilliseconds, importStopwatch.Elapsed.TotalSeconds);
+
+			overallStopwatch.Stop();
+			_logger.LogInformation(
+				"Geofabrik city polygons processing for {CountryIso2} completed in {ElapsedMilliseconds}ms ({ElapsedMinutes:F2} minutes)",
+				countryIsoAlpha2Code, overallStopwatch.ElapsedMilliseconds, overallStopwatch.Elapsed.TotalMinutes);
+		}
+		finally
+		{
+			// Cleanup
+			try
+			{
+				Directory.Delete(tempDir, true);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Failed to delete temporary directory {TempDir} for {CountryIso2}", tempDir,
+					countryIsoAlpha2Code);
+			}
+		}
+	}
+
+	private static string BuildGeofabrikUrl(string countryIsoAlpha2Code)
+	{
+		// Hard-coded mapping from ISO alpha-2 to Geofabrik path.
+		// For many countries Geofabrik uses /europe/{country}-latest-free.shp.zip etc.
+		// This mapping can be extended as needed.
+
+		var code = countryIsoAlpha2Code.ToUpperInvariant();
+
+		// Minimal initial mapping; extend as your use-cases grow.
+		var path = code switch
+		{
+			"DE" => "europe/germany",
+			"FR" => "europe/france",
+			"IT" => "europe/italy",
+			"ES" => "europe/spain",
+			"PT" => "europe/portugal",
+			"PL" => "europe/poland",
+			"NL" => "europe/netherlands",
+			"BE" => "europe/belgium",
+			"LU" => "europe/luxembourg",
+			"AT" => "europe/austria",
+			"CH" => "europe/switzerland",
+			"CZ" => "europe/czech-republic",
+			"SK" => "europe/slovakia",
+			"HU" => "europe/hungary",
+			"SI" => "europe/slovenia",
+			"HR" => "europe/croatia",
+			"RS" => "europe/serbia",
+			"BA" => "europe/bosnia-herzegovina",
+			"ME" => "europe/montenegro",
+			"AL" => "europe/albania",
+			"MK" => "europe/macedonia",
+			"GR" => "europe/greece",
+			"BG" => "europe/bulgaria",
+			"RO" => "europe/romania",
+			// Russia and some other large countries have their own top-level files
+			"RU" => "russia",
+			"UA" => "europe/ukraine",
+			"BY" => "europe/belarus",
+			// Fallback: try using "europe/{lowercase-name}" is not possible without mapping, so default to continent-level
+			_ => "europe"
+		};
+
+		return $"https://download.geofabrik.de/{path}-latest-free.shp.zip";
+	}
+
+	private async Task<string[]> GetAllCountryIso2FromDatabaseAsync(CancellationToken cancellationToken)
+	{
+		var codes = new List<string>();
+
+		await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+		await using var cmd = new NpgsqlCommand(
+			"SELECT DISTINCT iso_alpha2_code FROM countries WHERE iso_alpha2_code IS NOT NULL ORDER BY iso_alpha2_code;",
+			connection);
+
+		await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+		while (await reader.ReadAsync(cancellationToken))
+		{
+			if (!reader.IsDBNull(0))
+			{
+				var code = reader.GetString(0).Trim().ToUpperInvariant();
+				if (code.Length == 2) codes.Add(code);
+			}
+		}
+
+		_logger.LogInformation("Loaded {Count} country ISO alpha-2 codes from 'countries' table for city loading",
+			codes.Count);
+
+		return codes.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+	}
+
+	private async Task<string> ConvertShapefileToGeoJsonAsync(string shpFilePath, CancellationToken cancellationToken)
+	{
+		_logger.LogInformation("Converting OSM/Geofabrik Shapefile to GeoJSON format using ogr2ogr...");
+
+		var geoJsonFile = Path.ChangeExtension(shpFilePath, ".geojson");
+
+		try
+		{
+			var processInfo = new ProcessStartInfo
+			{
+				FileName = "ogr2ogr",
+				Arguments = $"-f GeoJSON \"{geoJsonFile}\" \"{shpFilePath}\" -lco RFC7946=YES",
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				UseShellExecute = false,
+				CreateNoWindow = true
+			};
+
+			using var process = Process.Start(processInfo);
+			if (process == null) throw new InvalidOperationException("Failed to start ogr2ogr process");
+
+			var errorOutput = await process.StandardError.ReadToEndAsync(cancellationToken);
+			await process.WaitForExitAsync(cancellationToken);
+
+			if (process.ExitCode != 0)
+				throw new InvalidOperationException($"ogr2ogr failed with exit code {process.ExitCode}: {errorOutput}");
+
+			if (!File.Exists(geoJsonFile))
+				throw new FileNotFoundException($"GeoJSON file was not created: {geoJsonFile}");
+
+			_logger.LogInformation("Successfully converted OSM/Geofabrik Shapefile to GeoJSON");
+			var geoJsonContent = await File.ReadAllTextAsync(geoJsonFile, cancellationToken);
+
+			// Clean up temporary GeoJSON file
+			try
+			{
+				File.Delete(geoJsonFile);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Failed to delete temporary OSM GeoJSON file");
+			}
+
+			return geoJsonContent;
+		}
+		catch (Win32Exception ex) when (ex.NativeErrorCode == 2) // File not found
+		{
+			throw new InvalidOperationException(
+				"ogr2ogr (GDAL) is not installed or not in PATH. " +
+				"Please install GDAL tools to process Shapefile data. " +
+				"Install instructions: macOS: brew install gdal, Ubuntu/Debian: sudo apt-get install gdal-bin, Windows: Download from OSGeo4W",
+				ex);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Failed to convert OSM/Geofabrik Shapefile to GeoJSON");
+			throw;
+		}
+	}
+}
+
+

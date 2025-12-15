@@ -762,6 +762,17 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 	public async Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default)
 	{
+		await ImportCitiesFromGeoJsonAsync(geoJsonContent, null, cancellationToken);
+	}
+
+	/// <summary>
+	///     Imports city geometries from GeoJSON into the <c>cities</c> table.
+	///     Allows specifying a default country ISO alpha-2 code which will be used
+	///     when the source data does not contain an explicit country code.
+	/// </summary>
+	public async Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, string? defaultCountryIsoAlpha2Code,
+		CancellationToken cancellationToken = default)
+	{
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
 
@@ -895,24 +906,31 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			// At least one ISO code must be present
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 			{
-				skipped++;
-				var reason = "Missing or invalid country ISO code";
-				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
-
-				// Log first few skipped cities for debugging
-				if (skipped <= 10)
+				if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha2Code))
 				{
-					var cityName = properties.TryGetProperty("name", out var nameProp) &&
-					               nameProp.ValueKind == JsonValueKind.String
-						? nameProp.GetString()
-						: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
-						  nameAsciiProp.ValueKind == JsonValueKind.String
-							? nameAsciiProp.GetString()
-							: "Unknown";
-					_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
+					countryIsoAlpha2Code = defaultCountryIsoAlpha2Code.ToUpperInvariant();
 				}
+				else
+				{
+					skipped++;
+					var reason = "Missing or invalid country ISO code";
+					skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 
-				continue;
+					// Log first few skipped cities for debugging
+					if (skipped <= 10)
+					{
+						var cityName = properties.TryGetProperty("name", out var nameProp) &&
+						               nameProp.ValueKind == JsonValueKind.String
+							? nameProp.GetString()
+							: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
+							  nameAsciiProp.ValueKind == JsonValueKind.String
+								? nameAsciiProp.GetString()
+								: "Unknown";
+						_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
+					}
+
+					continue;
+				}
 			}
 
 			// Get city name

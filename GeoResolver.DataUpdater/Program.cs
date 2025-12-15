@@ -1,4 +1,4 @@
-﻿using GeoResolver.DataUpdater.Logging;
+using GeoResolver.DataUpdater.Logging;
 using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.DataLoaders;
 using GeoResolver.DataUpdater.Services.Shapefile;
@@ -42,6 +42,7 @@ services.AddHttpClient();
 // Register services
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
 services.AddSingleton<NaturalEarthShapefileLoader>();
+services.AddSingleton<OsmCityShapefileLoader>();
 services.AddSingleton<IDataLoader, DataLoader>();
 
 var serviceProvider = services.BuildServiceProvider();

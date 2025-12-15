@@ -4,20 +4,23 @@ using Microsoft.Extensions.Logging;
 
 namespace GeoResolver.DataUpdater.Services.DataLoaders;
 
-public class DataLoader : IDataLoader
+public sealed class DataLoader : IDataLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly ILogger<DataLoader> _logger;
 	private readonly NaturalEarthShapefileLoader _shapefileLoader;
+	private readonly OsmCityShapefileLoader _osmCityShapefileLoader;
 
 	public DataLoader(
 		IDatabaseWriterService databaseWriterService,
 		ILogger<DataLoader> logger,
-		NaturalEarthShapefileLoader shapefileLoader)
+		NaturalEarthShapefileLoader shapefileLoader,
+		OsmCityShapefileLoader osmCityShapefileLoader)
 	{
 		_databaseWriterService = databaseWriterService;
 		_logger = logger;
 		_shapefileLoader = shapefileLoader;
+		_osmCityShapefileLoader = osmCityShapefileLoader;
 	}
 
 	public async Task LoadAllDataAsync(CancellationToken cancellationToken = default)
@@ -43,6 +46,13 @@ public class DataLoader : IDataLoader
 		await LoadRegionsAsync(cancellationToken);
 		stopwatch.Stop();
 		_logger.LogInformation("Regions loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
+			stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
+
+		stopwatch.Restart();
+		_logger.LogInformation("Loading cities (OSM/Geofabrik) country by country...");
+		await LoadCitiesAsync(cancellationToken);
+		stopwatch.Stop();
+		_logger.LogInformation("Cities loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
 			stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
 		stopwatch.Restart();
@@ -94,6 +104,24 @@ public class DataLoader : IDataLoader
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "Failed to load regions from Natural Earth Shapefile");
+			throw;
+		}
+	}
+
+	private async Task LoadCitiesAsync(CancellationToken cancellationToken)
+	{
+		// Loading city polygons from OpenStreetMap (via Geofabrik shapefiles).
+		// Countries to load are configured in appsettings.json under "CityLoader:Countries".
+		_logger.LogInformation("Loading cities from OSM/Geofabrik datasets (per configured country)...");
+
+		try
+		{
+			await _osmCityShapefileLoader.LoadAllConfiguredCountriesAsync(cancellationToken);
+			_logger.LogInformation("Cities loaded successfully from OSM/Geofabrik");
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Failed to load cities from OSM/Geofabrik");
 			throw;
 		}
 	}
