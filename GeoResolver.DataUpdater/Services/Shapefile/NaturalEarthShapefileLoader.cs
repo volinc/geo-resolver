@@ -35,10 +35,10 @@ public class NaturalEarthShapefileLoader
 		_databaseWriterService = databaseWriterService;
 	}
 
-    /// <summary>
-    ///     Downloads Natural Earth Admin 0 (Countries) Shapefile ZIP and processes it
-    /// </summary>
-    public async Task LoadCountriesAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	///     Downloads Natural Earth Admin 0 (Countries) Shapefile ZIP and processes it
+	/// </summary>
+	public async Task LoadCountriesAsync(CancellationToken cancellationToken = default)
 	{
 		var overallStopwatch = Stopwatch.StartNew();
 		_logger.LogInformation("Starting to load countries from Natural Earth Admin 0 dataset...");
@@ -108,10 +108,10 @@ public class NaturalEarthShapefileLoader
 			lastException);
 	}
 
-    /// <summary>
-    ///     Downloads Natural Earth Admin 1 (States/Provinces) Shapefile ZIP and processes it
-    /// </summary>
-    public async Task LoadRegionsAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	///     Downloads Natural Earth Admin 1 (States/Provinces) Shapefile ZIP and processes it
+	/// </summary>
+	public async Task LoadRegionsAsync(CancellationToken cancellationToken = default)
 	{
 		var overallStopwatch = Stopwatch.StartNew();
 		_logger.LogInformation("Starting to load regions from Natural Earth Admin 1 dataset...");
@@ -185,10 +185,10 @@ public class NaturalEarthShapefileLoader
 			lastException);
 	}
 
-    /// <summary>
-    ///     Downloads Natural Earth Populated Places Shapefile ZIP and processes it
-    /// </summary>
-    public async Task LoadCitiesAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	///     Downloads Natural Earth Populated Places Shapefile ZIP and processes it
+	/// </summary>
+	public async Task LoadCitiesAsync(CancellationToken cancellationToken = default)
 	{
 		var overallStopwatch = Stopwatch.StartNew();
 		_logger.LogInformation("Starting to load cities from Natural Earth Populated Places dataset...");
@@ -554,11 +554,11 @@ public class NaturalEarthShapefileLoader
 		}
 	}
 
-    /// <summary>
-    ///     Downloads and loads timezone boundaries from timezone-boundary-builder
-    ///     Source: https://github.com/evansiroky/timezone-boundary-builder/releases
-    /// </summary>
-    public async Task LoadTimezonesAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	///     Downloads and loads timezone boundaries from timezone-boundary-builder
+	///     Source: https://github.com/evansiroky/timezone-boundary-builder/releases
+	/// </summary>
+	public async Task LoadTimezonesAsync(CancellationToken cancellationToken = default)
 	{
 		var overallStopwatch = Stopwatch.StartNew();
 		_logger.LogInformation("Starting to load timezones from timezone-boundary-builder...");

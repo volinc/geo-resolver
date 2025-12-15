@@ -8,8 +8,8 @@ public sealed class DataLoader : IDataLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly ILogger<DataLoader> _logger;
-	private readonly NaturalEarthShapefileLoader _shapefileLoader;
 	private readonly OsmCityShapefileLoader _osmCityShapefileLoader;
+	private readonly NaturalEarthShapefileLoader _shapefileLoader;
 
 	public DataLoader(
 		IDatabaseWriterService databaseWriterService,

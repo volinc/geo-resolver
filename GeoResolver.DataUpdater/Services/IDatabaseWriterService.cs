@@ -12,6 +12,10 @@ public interface IDatabaseWriterService
 	Task ImportRegionsFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);
 	Task ImportCitiesAsync(IEnumerable<City> cities, CancellationToken cancellationToken = default);
 	Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);
+
+	Task ImportCitiesFromGeoJsonAsync(string geoJsonContent, string? defaultCountryIsoAlpha2Code,
+		CancellationToken cancellationToken = default);
+
 	Task ImportTimezonesAsync(IEnumerable<Timezone> timezones, CancellationToken cancellationToken = default);
 	Task ImportTimezonesFromGeoJsonAsync(string geoJsonContent, CancellationToken cancellationToken = default);
 }

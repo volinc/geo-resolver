@@ -1,3 +1,4 @@
+using GeoResolver.DataUpdater;
 using GeoResolver.DataUpdater.Logging;
 using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.DataLoaders;
@@ -38,6 +39,10 @@ services.AddSingleton<IDistributedLockProvider>(_ =>
 
 // Configure HTTP client
 services.AddHttpClient();
+
+// Configure options
+services.AddOptions();
+services.Configure<CityLoaderOptions>(configuration.GetSection("CityLoader"));
 
 // Register services
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();

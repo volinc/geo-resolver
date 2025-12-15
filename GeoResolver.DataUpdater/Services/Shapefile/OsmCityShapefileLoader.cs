@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace GeoResolver.DataUpdater.Services.Shapefile;
@@ -16,22 +16,22 @@ namespace GeoResolver.DataUpdater.Services.Shapefile;
 public sealed class OsmCityShapefileLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
+	private readonly NpgsqlDataSource _dataSource;
 	private readonly IHttpClientFactory _httpClientFactory;
 	private readonly ILogger<OsmCityShapefileLoader> _logger;
-	private readonly IConfiguration _configuration;
-	private readonly NpgsqlDataSource _dataSource;
+	private readonly IOptions<CityLoaderOptions> _options;
 
 	public OsmCityShapefileLoader(
 		ILogger<OsmCityShapefileLoader> logger,
 		IHttpClientFactory httpClientFactory,
 		IDatabaseWriterService databaseWriterService,
-		IConfiguration configuration,
+		IOptions<CityLoaderOptions> options,
 		NpgsqlDataSource dataSource)
 	{
 		_logger = logger;
 		_httpClientFactory = httpClientFactory;
 		_databaseWriterService = databaseWriterService;
-		_configuration = configuration;
+		_options = options;
 		_dataSource = dataSource;
 	}
 
@@ -41,7 +41,7 @@ public sealed class OsmCityShapefileLoader
 	/// </summary>
 	public async Task LoadAllConfiguredCountriesAsync(CancellationToken cancellationToken = default)
 	{
-		var configuredCodes = _configuration.GetSection("CityLoader:Countries").Get<string[]>() ?? Array.Empty<string>();
+		var configuredCodes = _options.Value.Countries;
 
 		string[] countryCodes;
 		if (configuredCodes.Length == 0)
@@ -157,7 +157,8 @@ public sealed class OsmCityShapefileLoader
 		_logger.LogInformation("Extracting and processing Geofabrik city polygons ZIP for {CountryIso2}...",
 			countryIsoAlpha2Code);
 
-		var tempDir = Path.Combine(Path.GetTempPath(), $"geo-resolver-osm-cities-{countryIsoAlpha2Code}-{Guid.NewGuid()}");
+		var tempDir = Path.Combine(Path.GetTempPath(),
+			$"geo-resolver-osm-cities-{countryIsoAlpha2Code}-{Guid.NewGuid()}");
 		Directory.CreateDirectory(tempDir);
 
 		try
@@ -304,13 +305,11 @@ public sealed class OsmCityShapefileLoader
 
 		await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
 		while (await reader.ReadAsync(cancellationToken))
-		{
 			if (!reader.IsDBNull(0))
 			{
 				var code = reader.GetString(0).Trim().ToUpperInvariant();
 				if (code.Length == 2) codes.Add(code);
 			}
-		}
 
 		_logger.LogInformation("Loaded {Count} country ISO alpha-2 codes from 'countries' table for city loading",
 			codes.Count);
@@ -378,5 +377,3 @@ public sealed class OsmCityShapefileLoader
 		}
 	}
 }
-
-

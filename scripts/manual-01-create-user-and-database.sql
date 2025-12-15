@@ -13,5 +13,5 @@ $$;
 
 -- Create database if not exists
 SELECT 'CREATE DATABASE geo_resolver OWNER geo_resolver'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'geo_resolver')\gexec
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'geo_resolver')
 
