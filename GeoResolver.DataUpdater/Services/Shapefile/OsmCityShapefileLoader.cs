@@ -192,29 +192,110 @@ public sealed class OsmCityShapefileLoader
 			// Check if cached file exists and is up-to-date
 			if (File.Exists(cacheFile) && File.Exists(cacheMetaFile))
 			{
-				var cachedEtag = await File.ReadAllTextAsync(cacheMetaFile, cancellationToken);
-				if (!string.IsNullOrWhiteSpace(cachedEtag))
+				// First verify the cached file is a valid ZIP (do this once, before any other operations)
+				bool isValidZip = false;
+				try
 				{
-					// Check if file on server has changed using conditional request
-					using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
-					headRequest.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{cachedEtag.Trim()}\""));
-					
-					try
+					// Use FileShare.ReadWrite to allow other processes to read the file
+					await using (var verifyStream = new FileStream(cacheFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
 					{
-						var headResponse = await httpClient.SendAsync(headRequest, cancellationToken);
-						if (headResponse.StatusCode == System.Net.HttpStatusCode.NotModified)
+						await using (var verifyArchive = new ZipArchive(verifyStream, ZipArchiveMode.Read, true))
 						{
-							_logger.LogInformation(
-								"Using cached shapefile for {CountryIso2} from {Url} (ETag: {ETag})",
-								countryIsoAlpha2Code, url, cachedEtag.Trim());
-							zipStream = File.OpenRead(cacheFile);
-							needsDownload = false;
-							downloadStopwatch.Stop();
+							_ = verifyArchive.Entries.Count;
+							isValidZip = true;
 						}
 					}
-					catch (Exception ex)
+					// Ensure stream is fully closed before proceeding
+					await Task.Yield();
+				}
+				catch (InvalidDataException)
+				{
+					// Cached file is corrupted - delete it and skip cache check
+					_logger.LogWarning("Cached ZIP file for {Url} is corrupted, deleting cache", url);
+					try
 					{
-						_logger.LogWarning(ex, "Failed to check ETag for {Url}, will download", url);
+						if (File.Exists(cacheFile)) File.Delete(cacheFile);
+						if (File.Exists(cacheMetaFile)) File.Delete(cacheMetaFile);
+					}
+					catch
+					{
+						// Ignore cleanup errors
+					}
+					// Continue to download
+				}
+				
+				// Only proceed with ETag check if file is still valid and exists
+				if (isValidZip && File.Exists(cacheFile) && File.Exists(cacheMetaFile))
+				{
+					var cachedEtag = await File.ReadAllTextAsync(cacheMetaFile, cancellationToken);
+					if (!string.IsNullOrWhiteSpace(cachedEtag))
+					{
+						// Normalize ETag: remove all quotes and whitespace
+						// Handle cases where ETag might be stored with quotes: "value" or ""value""
+						var etagValue = cachedEtag.Trim().Replace("\"", "").Trim();
+						if (!string.IsNullOrWhiteSpace(etagValue))
+						{
+						// Check if file on server has changed using conditional request
+						using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+						
+						try
+						{
+							// EntityTagHeaderValue constructor expects the tag WITH quotes
+							// Format: "tag-value" (weak ETags use W/"tag-value")
+							// Some ETag values may contain special characters, so we use TryParse first
+							System.Net.Http.Headers.EntityTagHeaderValue? etagHeaderValue = null;
+							var etagWithQuotes = $"\"{etagValue}\"";
+							
+							// Try parsing - this is more lenient than direct construction
+							if (System.Net.Http.Headers.EntityTagHeaderValue.TryParse(etagWithQuotes, out var parsedEtag))
+							{
+								etagHeaderValue = parsedEtag;
+							}
+							else
+							{
+								// If TryParse fails, the ETag format is invalid
+								// Delete invalid cache and skip ETag check
+								_logger.LogWarning(
+									"Invalid ETag format '{ETag}' in cache for {Url}, deleting cache metadata", 
+									etagValue, url);
+								try
+								{
+									if (File.Exists(cacheMetaFile)) File.Delete(cacheMetaFile);
+								}
+								catch
+								{
+									// Ignore cleanup errors
+								}
+								// Continue to download - don't use cache
+								throw new FormatException($"Invalid ETag format: {etagValue}");
+							}
+							
+							headRequest.Headers.IfNoneMatch.Add(etagHeaderValue);
+							
+							var headResponse = await httpClient.SendAsync(headRequest, cancellationToken);
+							if (headResponse.StatusCode == System.Net.HttpStatusCode.NotModified)
+							{
+								// File is up-to-date, use cached version
+								// We already verified the ZIP is valid at the beginning, so we can use it directly
+								_logger.LogInformation(
+									"Using cached shapefile for {CountryIso2} from {Url} (ETag: {ETag})",
+									countryIsoAlpha2Code, url, etagValue);
+								// Use FileShare.ReadWrite to allow concurrent access if needed
+								zipStream = new FileStream(cacheFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+								needsDownload = false;
+								downloadStopwatch.Stop();
+							}
+						}
+						catch (FormatException)
+						{
+							// ETag format is invalid - skip cache check and download
+							_logger.LogDebug("Skipping ETag check due to invalid format, will download");
+						}
+						catch (Exception ex)
+						{
+							_logger.LogWarning(ex, "Failed to check ETag for {Url}, will download", url);
+						}
+						}
 					}
 				}
 			}
@@ -232,10 +313,13 @@ public sealed class OsmCityShapefileLoader
 				}
 
 				// Save ETag for future cache checks
+				// ETag.Tag already contains quotes, but we'll save it as-is and normalize when reading
 				var etag = response.Headers.ETag?.Tag;
 				if (!string.IsNullOrWhiteSpace(etag))
 				{
-					await File.WriteAllTextAsync(cacheMetaFile, etag, cancellationToken);
+					// Save ETag without quotes for easier parsing later
+					var etagValue = etag.Trim().Trim('"');
+					await File.WriteAllTextAsync(cacheMetaFile, etagValue, cancellationToken);
 				}
 
 				// Download to cache file
@@ -249,15 +333,30 @@ public sealed class OsmCityShapefileLoader
 					countryIsoAlpha2Code, url, downloadStopwatch.ElapsedMilliseconds,
 					downloadStopwatch.Elapsed.TotalSeconds, cacheFile);
 				
-				zipStream = File.OpenRead(cacheFile);
+				// Ensure file stream is closed before opening again
+				await fileStream.FlushAsync(cancellationToken);
+				fileStream.Close();
+				await Task.Yield();
+				
+				// Use FileShare.ReadWrite to allow concurrent access if needed
+				zipStream = new FileStream(cacheFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 			}
 
 			if (zipStream != null)
 			{
 				await using (zipStream)
 				{
+					// Ensure stream is at the beginning
+					if (zipStream.CanSeek)
+						zipStream.Position = 0;
+					
 					await ProcessCityShapefileZipAsync(zipStream, countryIsoAlpha2Code, cancellationToken);
 				}
+			}
+			else
+			{
+				_logger.LogError("zipStream is null after download/cache check for {Url}", url);
+				return false;
 			}
 			
 			return true;

@@ -851,10 +851,17 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var root = jsonDoc.RootElement;
 		var features = root.GetProperty("features");
 
+		// Count total features for progress logging
+		var totalFeatures = features.GetArrayLength();
+		_logger?.LogInformation("Starting import of {TotalCount} city features from GeoJSON", totalFeatures);
+
 		await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 		var processed = 0;
 		var skipped = 0;
 		var skippedReasons = new Dictionary<string, int>();
+		var lastLogTime = DateTime.UtcNow;
+		const int logIntervalSeconds = 10; // Log progress every 10 seconds
+		const int logIntervalCount = 100; // Or every 100 cities
 
 		foreach (var featureElement in features.EnumerateArray())
 		{
@@ -1053,39 +1060,30 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					nameLatin = value;
 			}
 
-			// Last resort: if no Latin name found, try to transliterate the original name using ICU
+			// If no Latin name found, use original name (will be transliterated in post-processing)
+			// This ensures we import all cities from shapefile, even if they don't have Latin names yet
 			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
 			    properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
 			{
 				var originalValue = originalName.GetString();
 				if (!string.IsNullOrWhiteSpace(originalValue))
-				{
-					try
-					{
-						var transliterated = TransliterateToLatin(originalValue);
-						if (!string.IsNullOrWhiteSpace(transliterated) && ContainsLatinCharacters(transliterated))
-							nameLatin = transliterated;
-					}
-					catch (Exception ex)
-					{
-						_logger?.LogWarning(ex, "Failed to transliterate city name '{Name}' to Latin", originalValue);
-					}
-				}
+					nameLatin = originalValue; // Use original name, will be transliterated later
 			}
 
+			// Skip only if absolutely no name is available
 			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
 			{
 				skipped++;
-				var reason = "Missing or invalid city name";
+				var reason = "Missing city name";
 				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 				continue;
 			}
 
-			// Get geometry JSON early - needed for spatial join
+			// Get geometry JSON
 			var geometryJson = geometryElement.GetRawText();
 
 			// Get region identifier (admin level 1) - optional
-			// First try to get from OSM/Natural Earth properties
+			// Only get from OSM/Natural Earth properties (spatial join will be done in post-processing)
 			// Support both Natural Earth and OSM formats for region identifier
 			// OSM: is_in:state, addr:state, is_in:province
 			// Natural Earth: ADM1NAME, adm1name
@@ -1145,67 +1143,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					regionIdentifier = regionIdentifier.Trim('_');
 				}
 			}
-
-			// If region identifier not found in properties, try spatial join with regions table
-			// This is needed for OSM/Geofabrik data where region info is not in the shapefile
-			// We use ST_Centroid to find region by city center point, which works for both POINT and MULTIPOLYGON geometries
-			if (string.IsNullOrWhiteSpace(regionIdentifier))
-			{
-				try
-				{
-					// Use ST_Centroid to find region by city center, or ST_Intersects for polygon overlap
-					// Filter by country codes if available to speed up the query
-					string regionQuerySql;
-					if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) &&
-					    !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-						regionQuerySql = @"
-                        SELECT identifier 
-                        FROM regions 
-                        WHERE (country_iso_alpha2_code = @countryAlpha2Code OR country_iso_alpha3_code = @countryAlpha3Code)
-                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
-                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
-                        LIMIT 1;";
-					else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-						regionQuerySql = @"
-                        SELECT identifier 
-                        FROM regions 
-                        WHERE country_iso_alpha2_code = @countryAlpha2Code
-                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
-                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
-                        LIMIT 1;";
-					else if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-						regionQuerySql = @"
-                        SELECT identifier 
-                        FROM regions 
-                        WHERE country_iso_alpha3_code = @countryAlpha3Code
-                          AND (ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
-                               OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry)))
-                        LIMIT 1;";
-					else
-						regionQuerySql = @"
-                        SELECT identifier 
-                        FROM regions 
-                        WHERE ST_Contains(geometry, ST_Centroid(ST_GeomFromGeoJSON(@cityGeometry)))
-                           OR ST_Intersects(geometry, ST_GeomFromGeoJSON(@cityGeometry))
-                        LIMIT 1;";
-
-					await using var regionQuery = new NpgsqlCommand(regionQuerySql, connection, transaction);
-					regionQuery.Parameters.AddWithValue("cityGeometry", NpgsqlDbType.Jsonb, geometryJson);
-					if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-						regionQuery.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
-					if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-						regionQuery.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
-
-					var regionResult = await regionQuery.ExecuteScalarAsync(cancellationToken);
-					if (regionResult != null && regionResult != DBNull.Value)
-						regionIdentifier = regionResult.ToString();
-				}
-				catch (Exception ex)
-				{
-					// Log but don't fail - region identifier is optional
-					_logger?.LogDebug(ex, "Failed to find region for city {CityName} via spatial join", nameLatin);
-				}
-			}
+			// Note: Spatial join for region_identifier is done in post-processing
 
 			// Generate city identifier - use nameascii + country code, or geonames_id if available
 			string identifier;
@@ -1265,6 +1203,17 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				await cmd.ExecuteNonQueryAsync(cancellationToken);
 				processed++;
+				
+				// Log progress periodically
+				var now = DateTime.UtcNow;
+				if (processed % logIntervalCount == 0 || (now - lastLogTime).TotalSeconds >= logIntervalSeconds)
+				{
+					var progressPercent = totalFeatures > 0 ? (processed * 100.0 / totalFeatures) : 0;
+					_logger?.LogInformation(
+						"City import progress: {Processed}/{Total} ({ProgressPercent:F1}%), skipped: {Skipped}",
+						processed, totalFeatures, progressPercent, skipped);
+					lastLogTime = now;
+				}
 			}
 			catch (Exception ex)
 			{
@@ -1281,6 +1230,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		_logger?.LogInformation("Cities import: processed={Processed}, skipped={Skipped}", processed, skipped);
 		foreach (var reason in skippedReasons)
 			_logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
+
+		// Post-processing: fill missing region_identifier and transliterate names
+		if (processed > 0)
+		{
+			_logger?.LogInformation("Starting post-processing: updating region_identifier and transliterating names");
+			await PostProcessCitiesAsync(cancellationToken);
+		}
 	}
 
 	public async Task ImportTimezonesAsync(IEnumerable<Timezone> timezones,
@@ -1542,6 +1498,121 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			// If ICU transliteration fails, return null
 			return null;
 		}
+	}
+
+	/// <summary>
+	///     Post-processes imported cities: fills missing region_identifier using spatial queries
+	///     and transliterates non-Latin names to Latin.
+	/// </summary>
+	private async Task PostProcessCitiesAsync(CancellationToken cancellationToken = default)
+	{
+		await using var connection = _npgsqlDataSource.CreateConnection();
+		await connection.OpenAsync(cancellationToken);
+
+		_logger?.LogInformation("Post-processing cities: updating region_identifier and transliterating names");
+
+		// Step 1: Update region_identifier for cities where it's NULL using spatial queries
+		var regionUpdateCount = 0;
+		try
+		{
+			// Update cities with NULL region_identifier by finding matching regions via spatial join
+			// Use DISTINCT ON to handle cases where multiple regions might contain the same city
+			// We'll update each city only once with the first matching region
+			await using var regionUpdateCmd = new NpgsqlCommand(@"
+                UPDATE cities c
+                SET region_identifier = sub.identifier
+                FROM (
+                  SELECT DISTINCT ON (c.id) c.id, r.identifier
+                  FROM cities c
+                  INNER JOIN regions r ON (
+                    (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code = c.country_iso_alpha2_code)
+                    OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code = c.country_iso_alpha3_code)
+                  )
+                  WHERE c.region_identifier IS NULL
+                    AND ST_Contains(r.geometry, ST_Centroid(c.geometry))
+                  ORDER BY c.id, r.id
+                ) sub
+                WHERE c.id = sub.id;", connection);
+			regionUpdateCmd.CommandTimeout = 300; // 5 minutes timeout for bulk update
+			regionUpdateCount = await regionUpdateCmd.ExecuteNonQueryAsync(cancellationToken);
+			_logger?.LogInformation("Updated region_identifier for {Count} cities using spatial queries", regionUpdateCount);
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Failed to update region_identifier for some cities");
+		}
+
+		// Step 2: Transliterate non-Latin names to Latin
+		var transliterationCount = 0;
+		try
+		{
+			// Get cities with non-Latin names (or names that need transliteration)
+			await using var selectCmd = new NpgsqlCommand(@"
+                SELECT id, name_latin, country_iso_alpha2_code, country_iso_alpha3_code
+                FROM cities
+                WHERE name_latin IS NOT NULL
+                  AND NOT (name_latin ~ '^[A-Za-z0-9\s\-\.\']+$') -- Contains non-Latin characters
+                LIMIT 10000;", connection); // Process in batches to avoid memory issues
+			selectCmd.CommandTimeout = 60;
+
+			await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken);
+			var citiesToUpdate = new List<(int Id, string OriginalName, string? CountryAlpha2, string? CountryAlpha3)>();
+
+			while (await reader.ReadAsync(cancellationToken))
+			{
+				var id = reader.GetInt32(0);
+				var originalName = reader.GetString(1);
+				var countryAlpha2 = reader.IsDBNull(2) ? null : reader.GetString(2);
+				var countryAlpha3 = reader.IsDBNull(3) ? null : reader.GetString(3);
+				citiesToUpdate.Add((id, originalName, countryAlpha2, countryAlpha3));
+			}
+
+			_logger?.LogInformation("Found {Count} cities with non-Latin names to transliterate", citiesToUpdate.Count);
+
+			// Update cities with transliterated names
+			if (citiesToUpdate.Count > 0)
+			{
+				await using var updateTransaction = await connection.BeginTransactionAsync(cancellationToken);
+				try
+				{
+					foreach (var (id, originalName, countryAlpha2, countryAlpha3) in citiesToUpdate)
+					{
+						var transliterated = TransliterateToLatin(originalName);
+						if (!string.IsNullOrWhiteSpace(transliterated) && ContainsLatinCharacters(transliterated))
+						{
+							await using var updateCmd = new NpgsqlCommand(@"
+                                UPDATE cities
+                                SET name_latin = @transliteratedName
+                                WHERE id = @cityId;", connection, updateTransaction);
+							updateCmd.Parameters.AddWithValue("transliteratedName", transliterated);
+							updateCmd.Parameters.AddWithValue("cityId", id);
+							await updateCmd.ExecuteNonQueryAsync(cancellationToken);
+							transliterationCount++;
+
+							if (transliterationCount % 100 == 0)
+							{
+								_logger?.LogInformation("Transliterated {Count} city names...", transliterationCount);
+							}
+						}
+					}
+
+					await updateTransaction.CommitAsync(cancellationToken);
+					_logger?.LogInformation("Transliterated {Count} city names to Latin", transliterationCount);
+				}
+				catch (Exception ex)
+				{
+					await updateTransaction.RollbackAsync(cancellationToken);
+					_logger?.LogError(ex, "Failed to transliterate city names, transaction rolled back");
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Failed to transliterate some city names");
+		}
+
+		_logger?.LogInformation("Post-processing completed: updated {RegionCount} region_identifiers, transliterated {TransliterationCount} names",
+			regionUpdateCount, transliterationCount);
 	}
 
 	private static (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)
