@@ -6,5 +6,5 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- Grant usage on schema public to georesolver user
-GRANT ALL ON SCHEMA public TO georesolver;
+GRANT ALL ON SCHEMA public TO geo_resolver;
 

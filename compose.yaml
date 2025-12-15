@@ -11,9 +11,9 @@ services:
     image: postgis/postgis:16-3.4
     container_name: geo-resolver-postgres
     environment:
-      POSTGRES_USER: georesolver
-      POSTGRES_PASSWORD: georesolver_password
-      POSTGRES_DB: georesolver
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: geo_resolver
     ports:
       - "5432:5432"
     volumes:
@@ -22,7 +22,7 @@ services:
       - ./scripts/docker-02-enable-postgis.sql:/docker-entrypoint-initdb.d/02-enable-postgis.sql
       - ./scripts/docker-03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U georesolver -d georesolver"]
+      test: ["CMD-SHELL", "pg_isready -U geo_resolver -d geo_resolver"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,12 +33,12 @@ services:
     build:
       context: .
       dockerfile: GeoResolver/Dockerfile
-    container_name: geo-resolver-app
+    container_name: geo-resolver-api
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=georesolver;Username=georesolver;Password=georesolver_password"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=pass"
       ASPNETCORE_URLS: "http://+:8080"
       TZ: "UTC"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "true"

@@ -5,13 +5,13 @@
 -- Create user if not exists
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = 'georesolver') THEN
-        CREATE USER georesolver WITH PASSWORD 'georesolver_password';
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = 'geo_resolver') THEN
+        CREATE USER geo_resolver WITH PASSWORD 'pass';
     END IF;
 END
 $$;
 
 -- Create database if not exists
-SELECT 'CREATE DATABASE georesolver OWNER georesolver'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'georesolver')\gexec
+SELECT 'CREATE DATABASE geo_resolver OWNER geo_resolver'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'geo_resolver')\gexec
 

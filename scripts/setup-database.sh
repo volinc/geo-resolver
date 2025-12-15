@@ -6,7 +6,7 @@
 set -e
 
 DB_USER="${POSTGRES_USER:-postgres}"
-DB_NAME="${POSTGRES_DB:-georesolver}"
+DB_NAME="${POSTGRES_DB:-geo_resolver}"
 
 echo "Step 1/3: Creating user and database..."
 psql -U "$DB_USER" -f scripts/manual-01-create-user-and-database.sql
