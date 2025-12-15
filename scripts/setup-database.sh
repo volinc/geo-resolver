@@ -9,7 +9,7 @@ DB_USER="${POSTGRES_USER:-postgres}"
 DB_NAME="${POSTGRES_DB:-geo_resolver}"
 
 echo "Step 1/3: Creating user and database..."
-psql -U "$DB_USER" -f scripts/manual-01-create-user-and-database.sql
+psql -U "$DB_USER" -f scripts/manual-01-create-users-and-database.sql
 
 echo "Step 2/3: Enabling PostGIS extension..."
 psql -U "$DB_USER" -d "$DB_NAME" -f scripts/manual-02-enable-postgis.sql

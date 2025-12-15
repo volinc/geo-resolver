@@ -8,7 +8,7 @@ networks:
     
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    image: postgis/postgis:18-3.6
     container_name: geo-resolver-postgres
     environment:
       POSTGRES_USER: postgres
@@ -22,7 +22,7 @@ services:
       - ./scripts/docker-02-enable-postgis.sql:/docker-entrypoint-initdb.d/02-enable-postgis.sql
       - ./scripts/docker-03-create-tables.sql:/docker-entrypoint-initdb.d/03-create-tables.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geo_resolver -d geo_resolver"]
+      test: ["CMD-SHELL", "pg_isready -U reader -d geo_resolver"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,7 +38,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=pass"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=geo_resolver;Username=reader;Password=pass"
       ASPNETCORE_URLS: "http://+:8080"
       TZ: "UTC"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "true"

@@ -6,6 +6,3 @@
 -- Enable PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;
 
--- Grant usage on schema public to geo_resolver user
-GRANT ALL ON SCHEMA public TO geo_resolver;
-

@@ -1,15 +1,15 @@
--- Idempotent script to create PostgreSQL user and set as database owner
+-- Idempotent script to create PostgreSQL users
 -- This script is executed automatically by docker-entrypoint-initdb.d
 -- Runs as postgres superuser AFTER database is created (via POSTGRES_DB environment variable in docker-compose.yml)
 
--- Create user if not exists
+-- Create reader user (read-only, used by GeoResolver API)
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = 'geo_resolver') THEN
-        CREATE USER geo_resolver WITH PASSWORD 'pass';
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = 'reader') THEN
+        CREATE USER reader WITH PASSWORD 'pass';
     END IF;
 END
 $$;
 
--- Set geo_resolver as owner of the database
-ALTER DATABASE geo_resolver OWNER TO geo_resolver;
+-- Grant usage on schema public to reader user
+GRANT USAGE ON SCHEMA public TO reader;
