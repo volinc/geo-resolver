@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using GeoResolver.DataUpdater.Services.Osm;
 using GeoResolver.DataUpdater.Services.Shapefile;
 using Microsoft.Extensions.Logging;
 
@@ -9,19 +8,16 @@ public class DataLoader : IDataLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly ILogger<DataLoader> _logger;
-	private readonly OsmCityLoader _osmCityLoader;
 	private readonly NaturalEarthShapefileLoader _shapefileLoader;
 
 	public DataLoader(
 		IDatabaseWriterService databaseWriterService,
 		ILogger<DataLoader> logger,
-		NaturalEarthShapefileLoader shapefileLoader,
-		OsmCityLoader osmCityLoader)
+		NaturalEarthShapefileLoader shapefileLoader)
 	{
 		_databaseWriterService = databaseWriterService;
 		_logger = logger;
 		_shapefileLoader = shapefileLoader;
-		_osmCityLoader = osmCityLoader;
 	}
 
 	public async Task LoadAllDataAsync(CancellationToken cancellationToken = default)
@@ -47,13 +43,6 @@ public class DataLoader : IDataLoader
 		await LoadRegionsAsync(cancellationToken);
 		stopwatch.Stop();
 		_logger.LogInformation("Regions loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
-			stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
-
-		stopwatch.Restart();
-		_logger.LogInformation("Loading cities...");
-		await LoadCitiesAsync(cancellationToken);
-		stopwatch.Stop();
-		_logger.LogInformation("Cities loading completed in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
 			stopwatch.ElapsedMilliseconds, stopwatch.Elapsed.TotalSeconds);
 
 		stopwatch.Restart();
@@ -106,26 +95,6 @@ public class DataLoader : IDataLoader
 		{
 			_logger.LogError(ex, "Failed to load regions from Natural Earth Shapefile");
 			throw;
-		}
-	}
-
-	private async Task LoadCitiesAsync(CancellationToken cancellationToken)
-	{
-		// Using OpenStreetMap via Overpass API to get city boundaries
-		// OSM provides polygon boundaries for cities with place=city or place=town tags
-		// and boundary=administrative with appropriate admin_level
-		_logger.LogInformation("Loading cities from OpenStreetMap via Overpass API...");
-
-		try
-		{
-			await _osmCityLoader.LoadCitiesAsync(cancellationToken);
-			_logger.LogInformation("Cities loaded successfully from OpenStreetMap");
-		}
-		catch (Exception ex)
-		{
-			_logger.LogError(ex, "Failed to load cities from OpenStreetMap");
-			_logger.LogWarning("City loading failed - cities table may remain empty or partially populated");
-			// Don't throw - allow the process to continue with other data
 		}
 	}
 

@@ -1,7 +1,6 @@
 ﻿using GeoResolver.DataUpdater.Logging;
 using GeoResolver.DataUpdater.Services;
 using GeoResolver.DataUpdater.Services.DataLoaders;
-using GeoResolver.DataUpdater.Services.Osm;
 using GeoResolver.DataUpdater.Services.Shapefile;
 using Medallion.Threading;
 using Medallion.Threading.Postgres;
@@ -43,7 +42,6 @@ services.AddHttpClient();
 // Register services
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
 services.AddSingleton<NaturalEarthShapefileLoader>();
-services.AddSingleton<OsmCityLoader>();
 services.AddSingleton<IDataLoader, DataLoader>();
 
 var serviceProvider = services.BuildServiceProvider();
