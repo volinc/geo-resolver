@@ -400,12 +400,20 @@ public sealed class OsmCityShapefileLoader
 
 		var geoJsonFile = Path.ChangeExtension(shpFilePath, ".geojson");
 
+		// Фильтруем только крупные населенные пункты:
+		// - fclass IN ('city', 'town', 'national_capital') - официальные города и крупные поселки
+		// - ИЛИ population >= 10000 - населенные пункты с населением >= 10000
+		// Это исключает деревни (village), хутора (hamlet), пригороды (suburb) и т.д.
+		var whereClause =
+			"fclass IN ('city', 'town', 'national_capital') OR population >= 10000";
+
 		try
 		{
 			var processInfo = new ProcessStartInfo
 			{
 				FileName = "ogr2ogr",
-				Arguments = $"-f GeoJSON \"{geoJsonFile}\" \"{shpFilePath}\" -lco RFC7946=YES",
+				Arguments =
+					$"-f GeoJSON \"{geoJsonFile}\" \"{shpFilePath}\" -lco RFC7946=YES -where \"{whereClause}\"",
 				RedirectStandardOutput = true,
 				RedirectStandardError = true,
 				UseShellExecute = false,

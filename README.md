@@ -132,8 +132,10 @@ dotnet run --project GeoResolver.DataUpdater
 ```
 
 **Что делает приложение:**
-- Загружает оригинальные Shapefile архивы с Natural Earth (Admin 1 States/Provinces и Populated Places)
+- Загружает оригинальные Shapefile архивы с Natural Earth (Admin 0 Countries и Admin 1 States/Provinces)
+- Загружает shapefile'ы городов из OpenStreetMap данных через Geofabrik
 - Конвертирует Shapefile в GeoJSON с помощью `ogr2ogr` (GDAL)
+- Фильтрует города по типу и населению (только крупные населенные пункты)
 - Импортирует данные о странах, регионах и городах в базу данных
 - Очищает существующие данные перед загрузкой новых
 - Использует распределенные блокировки для предотвращения одновременного запуска нескольких процессов
@@ -167,22 +169,49 @@ dotnet run --project GeoResolver.DataUpdater
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=pass"
+    "DefaultConnection": "Host=localhost;Port=5432;Database=geo_resolver;Username=postgres;Password=pass"
+  },
+  "CityLoader": {
+    "Countries": ["RU", "DE", "FR"]
   }
 }
 ```
 
+**Настройка загрузки городов:**
+
+В секции `CityLoader:Countries` укажите массив 2-буквенных ISO кодов стран, для которых нужно загрузить города. Если массив пуст или отсутствует, будут загружены города для всех стран из таблицы `countries`.
+
+**Примеры:**
+- `"Countries": ["RU"]` - загрузить города только для России
+- `"Countries": ["DE", "FR", "IT"]` - загрузить города для Германии, Франции и Италии
+- `"Countries": []` - загрузить города для всех стран из таблицы `countries`
+
+**Примечание:** Для некоторых крупных стран (например, Россия) Geofabrik не предоставляет единый shapefile, поэтому приложение автоматически скачивает несколько региональных файлов параллельно и объединяет их при импорте.
+
 Или через переменную окружения:
 ```bash
-export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=geo_resolver;Username=geo_resolver;Password=your_password"
+export ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=geo_resolver;Username=postgres;Password=your_password"
 ```
 
 **Источники данных:**
 - **Countries**: Natural Earth Admin 0 Countries 10m Shapefile (официальный источник)
 - **Regions**: Natural Earth Admin 1 States/Provinces 10m Shapefile (официальный источник)
-- **Cities**: Natural Earth Populated Places 10m Shapefile (официальный источник)
+- **Cities**: OpenStreetMap данные через Geofabrik Shapefiles (полигональные границы городов)
 
-Все данные загружаются из одного источника (Natural Earth) для обеспечения консистентности ISO кодов, названий и границ между странами, регионами и городами.
+**Загрузка городов из OSM/Geofabrik:**
+
+Города загружаются из OpenStreetMap данных, предоставляемых Geofabrik в формате shapefile (`gis_osm_places_a_free_1.shp`). Для каждой страны, указанной в конфигурации `CityLoader:Countries` (или для всех стран из таблицы `countries`, если список пуст), приложение:
+
+1. Скачивает соответствующий shapefile ZIP с Geofabrik
+2. Для стран без единого shapefile (например, Россия) скачивает несколько региональных файлов параллельно
+3. **Фильтрует только крупные населенные пункты** при конвертации через `ogr2ogr`:
+   - `fclass IN ('city', 'town', 'national_capital')` - официальные города, крупные поселки и столицы
+   - **ИЛИ** `population >= 10000` - населенные пункты с населением >= 10000
+4. Импортирует отфильтрованные данные в таблицу `cities`
+
+Эта фильтрация исключает деревни (`village`), хутора (`hamlet`), пригороды (`suburb`) и другие мелкие населенные пункты, оставляя только значимые города для быстрого поиска по координатам.
+
+**Пример:** Для России вместо ~130,000 всех населенных пунктов из OSM импортируется только ~1,000-2,000 крупных городов и поселков, что соответствует официальной статистике (~1,125 городов на 2021 год).
 
 Приложение автоматически пытается скачать Shapefile архивы с нескольких зеркал Natural Earth. Если автоматическая загрузка не удается, приложение выведет инструкции для ручной загрузки.
 
@@ -328,26 +357,49 @@ GET http://localhost:5000/health
 
 ## Источники данных
 
-Сервис использует **Natural Earth Data** как единственный источник геопространственных данных для обеспечения максимальной консистентности:
+Сервис использует комбинацию открытых источников геопространственных данных:
 
 1. **Natural Earth Data 10m Admin 0 Countries** - для границ стран с ISO кодами (Shapefile формат)
 2. **Natural Earth Data 10m Admin 1 States/Provinces** - для границ регионов первого уровня административного деления (Shapefile формат)
-3. **Natural Earth Data 10m Populated Places** - для данных о городах и населенных пунктах (Shapefile формат)
-4. **Timezone Boundary Builder** - для границ временных поясов (не используется в текущей версии, используется приблизительный расчет на основе долготы)
+3. **OpenStreetMap через Geofabrik** - для полигональных границ городов (Shapefile формат `gis_osm_places_a_free_1.shp`)
+4. **Timezone Boundary Builder** - для границ временных поясов (GeoJSON формат)
 
-**Преимущества использования единого источника (Natural Earth):**
-- Гарантированная консистентность ISO кодов между странами, регионами и городами
-- Согласованность границ между административными уровнями
-- Все данные из одной версии релиза Natural Earth
-- Единая система названий и идентификаторов
-- Проще отслеживать обновления данных
+**Почему города загружаются из OSM/Geofabrik, а не из Natural Earth:**
+
+- Natural Earth Populated Places содержит только **точечные** данные (POINT), а для быстрого поиска "точка в полигоне" нужны **полигональные границы** городов (MULTIPOLYGON)
+- OSM/Geofabrik предоставляет полигональные границы городов (`gis_osm_places_a_free_1.shp`), что позволяет использовать `ST_Contains(geometry, point)` для точного определения города по координатам
+- Geofabrik регулярно обновляет данные на основе актуальных OSM данных
+
+**Фильтрация городов при загрузке:**
+
+При загрузке городов из OSM применяется фильтрация, чтобы импортировать только крупные населенные пункты:
+
+- **Включаются:**
+  - `fclass = 'city'` - официальные города
+  - `fclass = 'town'` - крупные поселки городского типа
+  - `fclass = 'national_capital'` - столицы
+  - `population >= 10000` - населенные пункты с населением >= 10000 человек
+
+- **Исключаются:**
+  - `fclass = 'village'` - деревни
+  - `fclass = 'hamlet'` - хутора
+  - `fclass = 'suburb'` - пригороды/районы
+  - `fclass = 'neighbourhood'` - микрорайоны
+  - Другие мелкие населенные пункты
+
+Фильтрация выполняется на этапе конвертации shapefile → GeoJSON через `ogr2ogr` с параметром `-where`, что позволяет не обрабатывать лишние данные и значительно сокращает объем импортируемых записей.
+
+**Пример:** Для России вместо ~130,000 всех населенных пунктов из OSM импортируется только ~1,000-2,000 крупных городов и поселков, что соответствует официальной статистике (~1,125 городов на 2021 год).
 
 Все данные загружаются автоматически через `GeoResolver.DataUpdater`, который:
-- Скачивает оригинальные Shapefile архивы с Natural Earth
-- Конвертирует их в GeoJSON с помощью GDAL (`ogr2ogr`)
+- Скачивает оригинальные Shapefile архивы с Natural Earth и Geofabrik
+- Конвертирует их в GeoJSON с помощью GDAL (`ogr2ogr`) с применением фильтров
 - Импортирует данные в PostgreSQL с PostGIS
 
-Официальный сайт Natural Earth: https://www.naturalearthdata.com/
+**Официальные сайты источников данных:**
+- Natural Earth: https://www.naturalearthdata.com/
+- Geofabrik: https://www.geofabrik.de/
+- Timezone Boundary Builder: https://github.com/evansiroky/timezone-boundary-builder
 
 ## Кэширование
 
