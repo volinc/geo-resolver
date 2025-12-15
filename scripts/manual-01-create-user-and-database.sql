@@ -14,7 +14,6 @@ $$;
 -- Create database if it doesn't exist (owner will be postgres by default)
 SELECT 'CREATE DATABASE geo_resolver'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'geo_resolver')\gexec
-
 -- Connect to geo_resolver database and grant privileges to reader
 \c geo_resolver
 
@@ -25,3 +24,4 @@ GRANT USAGE ON SCHEMA public TO reader;
 -- This allows reader to read from all tables that will be created later
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO reader;
+
