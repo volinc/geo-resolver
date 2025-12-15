@@ -533,6 +533,8 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 			{
 				skipped++;
+				var reason = "Missing or invalid country ISO code";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 				// Log first few skipped regions for debugging
 				if (skipped <= 10)
 				{
@@ -542,8 +544,12 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 						: properties.TryGetProperty("name_en", out var nameEnProp) &&
 						  nameEnProp.ValueKind == JsonValueKind.String
 							? nameEnProp.GetString()
-							: "Unknown";
-					_logger?.LogDebug("Skipped region '{RegionName}' - missing/invalid country ISO code", regionName);
+							: properties.TryGetProperty("NAME", out var nameUpperProp) &&
+							  nameUpperProp.ValueKind == JsonValueKind.String
+								? nameUpperProp.GetString()
+								: "Unknown";
+					_logger?.LogWarning("Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
+						regionName, properties.GetRawText());
 				}
 
 				continue;
@@ -575,19 +581,41 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Get region name
+			// Get region name - prioritize local name (original), use English as fallback
+			// Will be transliterated to Latin in post-processing if needed
 			var nameLatin = "Unknown";
-			if (properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
-				nameLatin = nameEn.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
-				nameLatin = name.GetString() ?? "Unknown";
+			if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			{
+				var value = name.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Use local name (original), will be transliterated later if needed
+			}
 			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
 			         nameUpper.ValueKind == JsonValueKind.String)
-				nameLatin = nameUpper.GetString() ?? "Unknown";
+			{
+				var value = nameUpper.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Use local name (original), will be transliterated later if needed
+			}
+			else if (properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
+			{
+				var value = nameEn.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Fallback to English name if local name not available
+			}
 
+			// Skip only if absolutely no name is available
 			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
 			{
 				skipped++;
+				var reason = "Missing region name";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+				// Log first few skipped regions for debugging
+				if (skipped <= 10)
+				{
+					_logger?.LogDebug("Skipped region - missing/invalid name. Properties: {Properties}",
+						properties.GetRawText());
+				}
 				continue;
 			}
 
@@ -756,6 +784,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		_logger?.LogInformation("  Regions with only alpha-3 code (NULL in alpha-2): {OnlyAlpha3}", onlyAlpha3Count);
 		foreach (var reason in skippedReasons)
 			_logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
+
+		// Post-processing: transliterate region names
+		if (processed > 0)
+		{
+			_logger?.LogInformation("Starting post-processing: transliterating region names");
+			await _cityPostProcessor.PostProcessRegionsAsync(cancellationToken);
+		}
 
 		// Query to check regions per country (for debugging)
 		try
@@ -1015,64 +1050,47 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Get city name - prioritize ASCII/English names to avoid Cyrillic and other non-Latin characters
-			// OSM/Geofabrik shapefile fields: nameascii (ASCII transliteration), name_en (English), name (original, can be any language)
+			// Get city name - prioritize local name (original), use ASCII/English as fallback
+			// OSM/Geofabrik shapefile fields: name (original, local), nameascii (ASCII transliteration), name_en (English)
+			// Will be transliterated to Latin in post-processing if needed
 			var nameLatin = "Unknown";
-			if (properties.TryGetProperty("NAMEASCII", out var nameAsciiUpper) &&
-			    nameAsciiUpper.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
+			{
+				var value = originalName.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Use local name (original), will be transliterated later if needed
+			}
+			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
+			         nameUpper.ValueKind == JsonValueKind.String)
+			{
+				var value = nameUpper.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Use local name (original), will be transliterated later if needed
+			}
+			// Fallback to ASCII transliteration if local name not available
+			else if (properties.TryGetProperty("NAMEASCII", out var nameAsciiUpper) &&
+			         nameAsciiUpper.ValueKind == JsonValueKind.String)
 			{
 				var value = nameAsciiUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLatin = value;
 			}
-
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("nameascii", out var nameAscii) &&
-			    nameAscii.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty("nameascii", out var nameAscii) &&
+			         nameAscii.ValueKind == JsonValueKind.String)
 			{
 				var value = nameAscii.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLatin = value;
 			}
-
-			// Fallback to English name if ASCII not available
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("name_en", out var nameEn) &&
-			    nameEn.ValueKind == JsonValueKind.String)
+			// Fallback to English name if local and ASCII not available
+			else if (properties.TryGetProperty("name_en", out var nameEn) &&
+			         nameEn.ValueKind == JsonValueKind.String)
 			{
 				var value = nameEn.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLatin = value;
 			}
 
-			// Last resort: use original name, but only if it contains Latin characters
-			// This avoids importing Cyrillic, Arabic, Chinese, etc. names into name_latin field
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("NAME", out var nameUpper) &&
-			    nameUpper.ValueKind == JsonValueKind.String)
-			{
-				var value = nameUpper.GetString();
-				if (!string.IsNullOrWhiteSpace(value) && _transliterationService.ContainsLatinCharacters(value))
-					nameLatin = value;
-			}
-
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
-			{
-				var value = name.GetString();
-				if (!string.IsNullOrWhiteSpace(value) && _transliterationService.ContainsLatinCharacters(value))
-					nameLatin = value;
-			}
-
-			// If no Latin name found, use original name (will be transliterated in post-processing)
-			// This ensures we import all cities from shapefile, even if they don't have Latin names yet
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
-			{
-				var originalValue = originalName.GetString();
-				if (!string.IsNullOrWhiteSpace(originalValue))
-					nameLatin = originalValue; // Use original name, will be transliterated later
-			}
 
 			// Skip only if absolutely no name is available
 			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")

@@ -140,4 +140,87 @@ public sealed class CityPostProcessor : ICityPostProcessor
 		_logger?.LogInformation("Post-processing completed: updated {RegionCount} region_identifiers, transliterated {TransliterationCount} names",
 			regionUpdateCount, transliterationCount);
 	}
+
+	/// <summary>
+	///     Post-processes imported regions: transliterates non-Latin names to Latin.
+	/// </summary>
+	public async Task PostProcessRegionsAsync(CancellationToken cancellationToken = default)
+	{
+		await using var connection = _npgsqlDataSource.CreateConnection();
+		await connection.OpenAsync(cancellationToken);
+
+		_logger?.LogInformation("Post-processing regions: transliterating names");
+
+		var transliterationCount = 0;
+		try
+		{
+			// Get regions with non-Latin names (or names that need transliteration)
+			// Check for names that contain characters outside basic ASCII Latin range
+			var regionsToUpdate = new List<(int Id, string OriginalName)>();
+
+			// Read all data first, then close the reader before starting transaction
+			await using (var selectCmd = new NpgsqlCommand(@"
+                SELECT id, name_latin
+                FROM regions
+                WHERE name_latin IS NOT NULL
+                  AND name_latin ~ '[^A-Za-z0-9 -.]' -- Contains non-Latin characters (simplified pattern)
+                LIMIT 10000;", connection)) // Process in batches to avoid memory issues
+			{
+				selectCmd.CommandTimeout = 60;
+				await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken);
+
+				while (await reader.ReadAsync(cancellationToken))
+				{
+					var id = reader.GetInt32(0);
+					var originalName = reader.GetString(1);
+					regionsToUpdate.Add((id, originalName));
+				}
+			} // Reader and command are closed here
+
+			_logger?.LogInformation("Found {Count} regions with non-Latin names to transliterate", regionsToUpdate.Count);
+
+			// Update regions with transliterated names
+			if (regionsToUpdate.Count > 0)
+			{
+				await using var updateTransaction = await connection.BeginTransactionAsync(cancellationToken);
+				try
+				{
+					foreach (var (id, originalName) in regionsToUpdate)
+					{
+						var transliterated = _transliterationService.TransliterateToLatin(originalName);
+						if (!string.IsNullOrWhiteSpace(transliterated) && _transliterationService.ContainsLatinCharacters(transliterated))
+						{
+							await using var updateCmd = new NpgsqlCommand(@"
+                                UPDATE regions
+                                SET name_latin = @transliteratedName
+                                WHERE id = @regionId;", connection, updateTransaction);
+							updateCmd.Parameters.AddWithValue("transliteratedName", transliterated);
+							updateCmd.Parameters.AddWithValue("regionId", id);
+							await updateCmd.ExecuteNonQueryAsync(cancellationToken);
+							transliterationCount++;
+
+							if (transliterationCount % 100 == 0)
+							{
+								_logger?.LogInformation("Transliterated {Count} region names...", transliterationCount);
+							}
+						}
+					}
+
+					await updateTransaction.CommitAsync(cancellationToken);
+					_logger?.LogInformation("Transliterated {Count} region names to Latin", transliterationCount);
+				}
+				catch (Exception ex)
+				{
+					await updateTransaction.RollbackAsync(cancellationToken);
+					_logger?.LogError(ex, "Failed to transliterate region names, transaction rolled back");
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Failed to transliterate some region names");
+		}
+
+		_logger?.LogInformation("Region post-processing completed: transliterated {TransliterationCount} names", transliterationCount);
+	}
 }
