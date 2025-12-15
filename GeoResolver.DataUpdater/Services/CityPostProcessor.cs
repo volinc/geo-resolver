@@ -1,4 +1,3 @@
-using ICU4N.Text;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -10,12 +9,15 @@ namespace GeoResolver.DataUpdater.Services;
 /// </summary>
 public sealed class CityPostProcessor : ICityPostProcessor
 {
+	private readonly ITransliterationService _transliterationService;
 	private readonly ILogger<CityPostProcessor>? _logger;
 	private readonly NpgsqlDataSource _npgsqlDataSource;
 
-	public CityPostProcessor(NpgsqlDataSource npgsqlDataSource, ILogger<CityPostProcessor>? logger = null)
+	public CityPostProcessor(NpgsqlDataSource npgsqlDataSource, ITransliterationService transliterationService,
+		ILogger<CityPostProcessor>? logger = null)
 	{
 		_npgsqlDataSource = npgsqlDataSource;
+		_transliterationService = transliterationService;
 		_logger = logger;
 	}
 
@@ -101,8 +103,8 @@ public sealed class CityPostProcessor : ICityPostProcessor
 				{
 					foreach (var (id, originalName, countryAlpha2, countryAlpha3) in citiesToUpdate)
 					{
-						var transliterated = TransliterateToLatin(originalName);
-						if (!string.IsNullOrWhiteSpace(transliterated) && ContainsLatinCharacters(transliterated))
+						var transliterated = _transliterationService.TransliterateToLatin(originalName);
+						if (!string.IsNullOrWhiteSpace(transliterated) && _transliterationService.ContainsLatinCharacters(transliterated))
 						{
 							await using var updateCmd = new NpgsqlCommand(@"
                                 UPDATE cities
@@ -137,32 +139,5 @@ public sealed class CityPostProcessor : ICityPostProcessor
 
 		_logger?.LogInformation("Post-processing completed: updated {RegionCount} region_identifiers, transliterated {TransliterationCount} names",
 			regionUpdateCount, transliterationCount);
-	}
-
-	private static bool ContainsLatinCharacters(string text)
-	{
-		// Check if string contains at least one Latin character (A-Z, a-z)
-		// This helps filter out names in Cyrillic, Arabic, Chinese, etc.
-		return text.Any(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-	}
-
-	private static string? TransliterateToLatin(string text)
-	{
-		if (string.IsNullOrWhiteSpace(text))
-			return null;
-
-		try
-		{
-			// Try common transliteration rules
-			// ICU supports various transliteration IDs like "Cyrillic-Latin", "Any-Latin", etc.
-			// "Any-Latin; Latin-ASCII" attempts to transliterate any script to Latin, then to ASCII
-			var transliterator = Transliterator.GetInstance("Any-Latin; Latin-ASCII");
-			return transliterator.Transliterate(text);
-		}
-		catch
-		{
-			// If ICU transliteration fails, return null
-			return null;
-		}
 	}
 }

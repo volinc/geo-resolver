@@ -13,14 +13,16 @@ namespace GeoResolver.DataUpdater.Services;
 public sealed class DatabaseWriterService : IDatabaseWriterService
 {
 	private readonly ICityPostProcessor _cityPostProcessor;
+	private readonly ITransliterationService _transliterationService;
 	private readonly ILogger<DatabaseWriterService>? _logger;
 	private readonly NpgsqlDataSource _npgsqlDataSource;
 
 	public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ICityPostProcessor cityPostProcessor,
-		ILogger<DatabaseWriterService>? logger = null)
+		ITransliterationService transliterationService, ILogger<DatabaseWriterService>? logger = null)
 	{
 		_npgsqlDataSource = npgsqlDataSource;
 		_cityPostProcessor = cityPostProcessor;
+		_transliterationService = transliterationService;
 		_logger = logger;
 	}
 
@@ -1050,7 +1052,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			    nameUpper.ValueKind == JsonValueKind.String)
 			{
 				var value = nameUpper.GetString();
-				if (!string.IsNullOrWhiteSpace(value) && ContainsLatinCharacters(value))
+				if (!string.IsNullOrWhiteSpace(value) && _transliterationService.ContainsLatinCharacters(value))
 					nameLatin = value;
 			}
 
@@ -1058,7 +1060,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			    properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
-				if (!string.IsNullOrWhiteSpace(value) && ContainsLatinCharacters(value))
+				if (!string.IsNullOrWhiteSpace(value) && _transliterationService.ContainsLatinCharacters(value))
 					nameLatin = value;
 			}
 
@@ -1475,12 +1477,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		return (approximateOffsetSeconds, 0);
 	}
 
-	private static bool ContainsLatinCharacters(string text)
-	{
-		// Check if string contains at least one Latin character (A-Z, a-z)
-		// This helps filter out names in Cyrillic, Arabic, Chinese, etc.
-		return text.Any(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-	}
 
 	private static (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)
 	{

@@ -45,6 +45,7 @@ services.AddOptions();
 services.Configure<CityLoaderOptions>(configuration.GetSection("CityLoader"));
 
 // Register services
+services.AddSingleton<ITransliterationService, TransliterationService>();
 services.AddSingleton<ICityPostProcessor, CityPostProcessor>();
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
 services.AddSingleton<IGeofabrikRegionPathResolver, GeofabrikRegionPathResolver>();
