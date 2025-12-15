@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GeoResolver.Models;
-using ICU4N.Text;
 using Microsoft.Extensions.Logging;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.IO;
@@ -13,12 +12,15 @@ namespace GeoResolver.DataUpdater.Services;
 
 public sealed class DatabaseWriterService : IDatabaseWriterService
 {
+	private readonly ICityPostProcessor _cityPostProcessor;
 	private readonly ILogger<DatabaseWriterService>? _logger;
 	private readonly NpgsqlDataSource _npgsqlDataSource;
 
-	public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ILogger<DatabaseWriterService>? logger = null)
+	public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ICityPostProcessor cityPostProcessor,
+		ILogger<DatabaseWriterService>? logger = null)
 	{
 		_npgsqlDataSource = npgsqlDataSource;
+		_cityPostProcessor = cityPostProcessor;
 		_logger = logger;
 	}
 
@@ -1235,7 +1237,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		if (processed > 0)
 		{
 			_logger?.LogInformation("Starting post-processing: updating region_identifier and transliterating names");
-			await PostProcessCitiesAsync(cancellationToken);
+			await _cityPostProcessor.PostProcessCitiesAsync(cancellationToken);
 		}
 	}
 
@@ -1478,143 +1480,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		// Check if string contains at least one Latin character (A-Z, a-z)
 		// This helps filter out names in Cyrillic, Arabic, Chinese, etc.
 		return text.Any(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-	}
-
-	private static string? TransliterateToLatin(string text)
-	{
-		if (string.IsNullOrWhiteSpace(text))
-			return null;
-
-		try
-		{
-			// Try common transliteration rules
-			// ICU supports various transliteration IDs like "Cyrillic-Latin", "Any-Latin", etc.
-			// "Any-Latin; Latin-ASCII" attempts to transliterate any script to Latin, then to ASCII
-			var transliterator = Transliterator.GetInstance("Any-Latin; Latin-ASCII");
-			return transliterator.Transliterate(text);
-		}
-		catch
-		{
-			// If ICU transliteration fails, return null
-			return null;
-		}
-	}
-
-	/// <summary>
-	///     Post-processes imported cities: fills missing region_identifier using spatial queries
-	///     and transliterates non-Latin names to Latin.
-	/// </summary>
-	private async Task PostProcessCitiesAsync(CancellationToken cancellationToken = default)
-	{
-		await using var connection = _npgsqlDataSource.CreateConnection();
-		await connection.OpenAsync(cancellationToken);
-
-		_logger?.LogInformation("Post-processing cities: updating region_identifier and transliterating names");
-
-		// Step 1: Update region_identifier for cities where it's NULL using spatial queries
-		var regionUpdateCount = 0;
-		try
-		{
-			// Update cities with NULL region_identifier by finding matching regions via spatial join
-			// Use DISTINCT ON to handle cases where multiple regions might contain the same city
-			// We'll update each city only once with the first matching region
-			await using var regionUpdateCmd = new NpgsqlCommand(@"
-                UPDATE cities c
-                SET region_identifier = sub.identifier
-                FROM (
-                  SELECT DISTINCT ON (c.id) c.id, r.identifier
-                  FROM cities c
-                  INNER JOIN regions r ON (
-                    (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code = c.country_iso_alpha2_code)
-                    OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code = c.country_iso_alpha3_code)
-                  )
-                  WHERE c.region_identifier IS NULL
-                    AND ST_Contains(r.geometry, ST_Centroid(c.geometry))
-                  ORDER BY c.id, r.id
-                ) sub
-                WHERE c.id = sub.id;", connection);
-			regionUpdateCmd.CommandTimeout = 300; // 5 minutes timeout for bulk update
-			regionUpdateCount = await regionUpdateCmd.ExecuteNonQueryAsync(cancellationToken);
-			_logger?.LogInformation("Updated region_identifier for {Count} cities using spatial queries", regionUpdateCount);
-		}
-		catch (Exception ex)
-		{
-			_logger?.LogWarning(ex, "Failed to update region_identifier for some cities");
-		}
-
-		// Step 2: Transliterate non-Latin names to Latin
-		var transliterationCount = 0;
-		try
-		{
-			// Get cities with non-Latin names (or names that need transliteration)
-			// Check for names that contain characters outside basic ASCII Latin range
-			// Simplified regex: check for any character that is NOT in [A-Za-z0-9 space hyphen dot]
-			await using var selectCmd = new NpgsqlCommand(@"
-                SELECT id, name_latin, country_iso_alpha2_code, country_iso_alpha3_code
-                FROM cities
-                WHERE name_latin IS NOT NULL
-                  AND name_latin ~ '[^A-Za-z0-9 -.]' -- Contains non-Latin characters (simplified pattern)
-                LIMIT 10000;", connection); // Process in batches to avoid memory issues
-			selectCmd.CommandTimeout = 60;
-
-			await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken);
-			var citiesToUpdate = new List<(int Id, string OriginalName, string? CountryAlpha2, string? CountryAlpha3)>();
-
-			while (await reader.ReadAsync(cancellationToken))
-			{
-				var id = reader.GetInt32(0);
-				var originalName = reader.GetString(1);
-				var countryAlpha2 = reader.IsDBNull(2) ? null : reader.GetString(2);
-				var countryAlpha3 = reader.IsDBNull(3) ? null : reader.GetString(3);
-				citiesToUpdate.Add((id, originalName, countryAlpha2, countryAlpha3));
-			}
-
-			_logger?.LogInformation("Found {Count} cities with non-Latin names to transliterate", citiesToUpdate.Count);
-
-			// Update cities with transliterated names
-			if (citiesToUpdate.Count > 0)
-			{
-				await using var updateTransaction = await connection.BeginTransactionAsync(cancellationToken);
-				try
-				{
-					foreach (var (id, originalName, countryAlpha2, countryAlpha3) in citiesToUpdate)
-					{
-						var transliterated = TransliterateToLatin(originalName);
-						if (!string.IsNullOrWhiteSpace(transliterated) && ContainsLatinCharacters(transliterated))
-						{
-							await using var updateCmd = new NpgsqlCommand(@"
-                                UPDATE cities
-                                SET name_latin = @transliteratedName
-                                WHERE id = @cityId;", connection, updateTransaction);
-							updateCmd.Parameters.AddWithValue("transliteratedName", transliterated);
-							updateCmd.Parameters.AddWithValue("cityId", id);
-							await updateCmd.ExecuteNonQueryAsync(cancellationToken);
-							transliterationCount++;
-
-							if (transliterationCount % 100 == 0)
-							{
-								_logger?.LogInformation("Transliterated {Count} city names...", transliterationCount);
-							}
-						}
-					}
-
-					await updateTransaction.CommitAsync(cancellationToken);
-					_logger?.LogInformation("Transliterated {Count} city names to Latin", transliterationCount);
-				}
-				catch (Exception ex)
-				{
-					await updateTransaction.RollbackAsync(cancellationToken);
-					_logger?.LogError(ex, "Failed to transliterate city names, transaction rolled back");
-				}
-			}
-		}
-		catch (Exception ex)
-		{
-			_logger?.LogWarning(ex, "Failed to transliterate some city names");
-		}
-
-		_logger?.LogInformation("Post-processing completed: updated {RegionCount} region_identifiers, transliterated {TransliterationCount} names",
-			regionUpdateCount, transliterationCount);
 	}
 
 	private static (int RawOffset, int DstOffset) CalculateTimezoneOffset(string timezoneId, DateTimeOffset utcNow)

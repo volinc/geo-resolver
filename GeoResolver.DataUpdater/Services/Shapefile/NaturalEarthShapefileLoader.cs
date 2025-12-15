@@ -9,7 +9,7 @@ namespace GeoResolver.DataUpdater.Services.Shapefile;
 ///     Loads and processes Natural Earth Shapefile data
 ///     Converts Shapefile to GeoJSON format for processing
 /// </summary>
-public class NaturalEarthShapefileLoader
+public sealed class NaturalEarthShapefileLoader : INaturalEarthShapefileLoader
 {
 	// Natural Earth official download URLs for 10m datasets
 	private const string Admin0CountriesUrl =

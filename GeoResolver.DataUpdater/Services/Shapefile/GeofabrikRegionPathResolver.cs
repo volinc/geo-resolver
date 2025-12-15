@@ -5,7 +5,7 @@ namespace GeoResolver.DataUpdater.Services.Shapefile;
 ///     For many countries, Geofabrik provides a single country-level shapefile.
 ///     For some large countries (e.g., Russia), only regional shapefiles exist.
 /// </summary>
-public sealed class GeofabrikRegionPathResolver
+public sealed class GeofabrikRegionPathResolver : IGeofabrikRegionPathResolver
 {
 	/// <summary>
 	///     Gets the list of Geofabrik region paths for the specified country.

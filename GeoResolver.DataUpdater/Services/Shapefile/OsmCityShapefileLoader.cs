@@ -15,11 +15,11 @@ namespace GeoResolver.DataUpdater.Services.Shapefile;
 ///     regional/country shapefile ZIP, extracts the city polygon layer and imports
 ///     it into the <c>cities</c> table.
 /// </summary>
-public sealed class OsmCityShapefileLoader
+public sealed class OsmCityShapefileLoader : IOsmCityShapefileLoader
 {
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly NpgsqlDataSource _dataSource;
-	private readonly GeofabrikRegionPathResolver _geofabrikRegionPathResolver;
+	private readonly IGeofabrikRegionPathResolver _geofabrikRegionPathResolver;
 	private readonly IHttpClientFactory _httpClientFactory;
 	private readonly ILogger<OsmCityShapefileLoader> _logger;
 	private readonly IOptions<CityLoaderOptions> _options;
@@ -30,7 +30,7 @@ public sealed class OsmCityShapefileLoader
 		IDatabaseWriterService databaseWriterService,
 		IOptions<CityLoaderOptions> options,
 		NpgsqlDataSource dataSource,
-		GeofabrikRegionPathResolver geofabrikRegionPathResolver)
+		IGeofabrikRegionPathResolver geofabrikRegionPathResolver)
 	{
 		_logger = logger;
 		_httpClientFactory = httpClientFactory;
@@ -520,7 +520,7 @@ public sealed class OsmCityShapefileLoader
 		// 	"fclass IN ('city', 'town', 'national_capital') OR population >= 10000";
 
 		var whereClause =
-			"fclass IN ('city', 'town', 'national_capital') OR population >= 100000";
+			"fclass IN ('city', 'national_capital') OR population >= 10000";
 
 		try
 		{

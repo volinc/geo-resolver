@@ -13,3 +13,8 @@ $$;
 
 -- Grant usage on schema public to reader user
 GRANT USAGE ON SCHEMA public TO reader;
+
+-- Grant SELECT on all existing and future tables in public schema
+-- This allows reader to read from all tables that will be created later
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO reader;

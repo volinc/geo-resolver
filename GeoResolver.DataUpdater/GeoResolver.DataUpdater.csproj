@@ -12,13 +12,14 @@
     <ItemGroup>
         <PackageReference Include="icu.net" Version="3.0.1" />
         <PackageReference Include="ICU4N.Transliterator" Version="60.1.0-alpha.187" />
-        <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
         <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.0" />
         <PackageReference Include="Npgsql.NetTopologySuite" Version="10.0.0" />
         <PackageReference Include="Npgsql" Version="10.0.0" />

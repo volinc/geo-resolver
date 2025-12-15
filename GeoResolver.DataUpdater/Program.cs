@@ -45,10 +45,11 @@ services.AddOptions();
 services.Configure<CityLoaderOptions>(configuration.GetSection("CityLoader"));
 
 // Register services
+services.AddSingleton<ICityPostProcessor, CityPostProcessor>();
 services.AddSingleton<IDatabaseWriterService, DatabaseWriterService>();
-services.AddSingleton<GeofabrikRegionPathResolver>();
-services.AddSingleton<NaturalEarthShapefileLoader>();
-services.AddSingleton<OsmCityShapefileLoader>();
+services.AddSingleton<IGeofabrikRegionPathResolver, GeofabrikRegionPathResolver>();
+services.AddSingleton<INaturalEarthShapefileLoader, NaturalEarthShapefileLoader>();
+services.AddSingleton<IOsmCityShapefileLoader, OsmCityShapefileLoader>();
 services.AddSingleton<IDataLoader, DataLoader>();
 
 var serviceProvider = services.BuildServiceProvider();
