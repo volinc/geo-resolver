@@ -31,12 +31,5 @@
     <ProjectReference Include="..\GeoResolver.Models\GeoResolver.Models.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Ensure appsettings files are included in publish output -->
-    <Content Include="appsettings*.json">
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-  </ItemGroup>
-
 </Project>
 
