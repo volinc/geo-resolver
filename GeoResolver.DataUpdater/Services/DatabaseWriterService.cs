@@ -1430,7 +1430,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					
 					if (!string.IsNullOrWhiteSpace(osmIdValue))
 					{
-						identifier = $"osm:{osmIdValue}";
+						identifier = osmIdValue;
 						if (debugLogCount <= maxDebugLogs)
 							_logger?.LogInformation("  ✓ Using OSM ID '{OsmId}' as identifier for city '{City}'", identifier, nameLatin);
 					}
@@ -1501,6 +1501,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				skipped++;
 				var reason = $"Database error: {ex.GetType().Name}";
 				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+				
+				// Log first few skipped cities with details
+				if (skipped <= 10)
+				{
+					_logger?.LogWarning(ex, "Failed to insert city '{CityName}' (identifier: {Identifier}, country: {Country}): {Error}", 
+						nameLatin, identifier ?? "NULL", countryIsoAlpha2Code ?? countryIsoAlpha3Code ?? "NULL", ex.Message);
+				}
 			}
 		}
 

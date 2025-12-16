@@ -115,7 +115,10 @@ public sealed class CityPostProcessor : ICityPostProcessor
 			{
 				_logger?.LogWarning("Stage 3: Found {Count} cities without region_identifier after stages 1 and 2. These are outside country borders and will be removed:", unassignedCities.Count);
 				foreach (var city in unassignedCities)
-					_logger?.LogWarning("  - ID {Id}: {Name} (assigned country: {Country})", city.Id, city.Name, city.CountryAlpha2 ?? city.CountryAlpha3 ?? "NULL");
+				{
+					_logger?.LogWarning("  - ID {Id}: {Name} (assigned country: {Country}) - REASON: City geometry is outside all regions of assigned country {Country}", 
+						city.Id, city.Name, city.CountryAlpha2 ?? city.CountryAlpha3 ?? "NULL", city.CountryAlpha2 ?? city.CountryAlpha3 ?? "NULL");
+				}
 				
 				// Delete cities that couldn't be assigned to any region in their assigned country
 				// This means they are outside their assigned country's borders
@@ -206,7 +209,9 @@ public sealed class CityPostProcessor : ICityPostProcessor
 			{
 				_logger?.LogWarning("Found {Count} cities without region_identifier and without country codes (will be removed):", noCountryCities.Count);
 				foreach (var city in noCountryCities)
-					_logger?.LogWarning("  - ID {Id}: {Name}", city.Id, city.Name);
+				{
+					_logger?.LogWarning("  - ID {Id}: {Name} - REASON: Missing both country codes and region_identifier", city.Id, city.Name);
+				}
 				
 				// Delete cities without country codes and without region
 				await using var deleteNoCountryCmd = new NpgsqlCommand(@"
@@ -331,6 +336,21 @@ public sealed class CityPostProcessor : ICityPostProcessor
 		catch (Exception ex)
 		{
 			_logger?.LogWarning(ex, "Failed to transliterate some city names");
+		}
+
+		// Final summary: count total cities in database after post-processing
+		try
+		{
+			await using var countCmd = new NpgsqlCommand("SELECT COUNT(*) FROM cities;", connection);
+			var totalCitiesAfter = await countCmd.ExecuteScalarAsync(cancellationToken);
+			if (totalCitiesAfter != null && totalCitiesAfter != DBNull.Value)
+			{
+				_logger?.LogInformation("Total cities in database after post-processing: {Count}", totalCitiesAfter);
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Failed to count cities after post-processing");
 		}
 
 		_logger?.LogInformation("Post-processing completed: updated {RegionCount} region_identifiers, transliterated {TransliterationCount} names",
