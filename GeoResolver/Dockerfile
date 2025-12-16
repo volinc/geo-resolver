@@ -1,6 +1,5 @@
-#FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS base
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-USER app
+# Use distroless image for Native AOT (no .NET runtime needed)
+FROM gcr.io/distroless/cc-debian12:nonroot AS base
 WORKDIR /app
 EXPOSE 8080
 
@@ -19,9 +18,21 @@ RUN dotnet build "./GeoResolver.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./GeoResolver.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+# Publish as Native AOT with self-contained and full trimming
+RUN dotnet publish "./GeoResolver.csproj" \
+    -c $BUILD_CONFIGURATION \
+    -o /app/publish \
+    -r linux-x64 \
+    --self-contained true \
+    /p:PublishAot=true \
+    /p:PublishTrimmed=true \
+    /p:TrimMode=full
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "GeoResolver.dll"]
+# Copy the native executable (not a DLL)
+COPY --from=publish /app/publish/GeoResolver .
+# Copy configuration files
+COPY --from=publish /app/publish/appsettings*.json ./
+# Native AOT produces a single executable, no need for dotnet command
+ENTRYPOINT ["./GeoResolver"]

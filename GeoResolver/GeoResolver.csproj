@@ -7,6 +7,17 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>.</DockerfileContext>
+    
+    <!-- Native AOT Configuration -->
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    
+    <!-- AOT-specific optimizations -->
+    <EventSourceSupport>false</EventSourceSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EnableSslCertificateGeneration>false</EnableSslCertificateGeneration>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +29,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GeoResolver.Models\GeoResolver.Models.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ensure appsettings files are included in publish output -->
+    <Content Include="appsettings*.json">
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
