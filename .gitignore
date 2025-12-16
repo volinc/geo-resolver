@@ -19,7 +19,7 @@
 ### macOS ###
 # General
 .DS_Store
-**/.DS_Store
+**/*.DS_Store
 .AppleDouble
 .LSOverride
 
@@ -563,8 +563,7 @@ FodyWeavers.xsd
 ### VisualStudio Patch ###
 # Additional files built by Visual Studio
 
-# End of https://www.toptal.com/developers/gitignore/api/linux,windows,macos,rider,visualstudio,visualstudiocodelogs/
-*.log
+# End of https://www.toptal.com/developers/gitignore/api/linux,windows,macos,rider,visualstudio,visualstudiocode
 
-# Log files directory
-logs/
+# OSM geofabrik
+**/*.pbf
