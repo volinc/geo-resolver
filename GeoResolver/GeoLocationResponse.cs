@@ -4,40 +4,37 @@ public sealed record GeoLocationResponse
 {
     /// <summary>
     /// ISO 3166-1 alpha-2 country code (e.g., "US", "RU", "GB")
+    /// Required if the point is within a country's territory
     /// </summary>
     public string? CountryIsoAlpha2Code { get; init; }
 
     /// <summary>
     /// ISO 3166-1 alpha-3 country code (e.g., "USA", "RUS", "GBR")
-    /// Required if the point is within a country's territory
     /// </summary>
     public string? CountryIsoAlpha3Code { get; init; }
 
     /// <summary>
     /// Country name in Latin transliteration (invariant) or translation into English
-    /// Required if the point is within a country's territory
     /// </summary>
     public string? CountryNameLatin { get; init; }
 
     /// <summary>
-    /// Region identifier (e.g., FIPS or GeoNames ID)
+    /// Region identifier ISO 3166-2 (e.g. "RU-MOW")
     /// </summary>
     public string? RegionIdentifier { get; init; }
 
     /// <summary>
-    /// Region name in Latin transliteration (invariant)
-    /// Required if the point is within a region's territory
+    /// Region name in Latin transliteration (invariant) or translation into English
     /// </summary>
     public string? RegionNameLatin { get; init; }
 
     /// <summary>
-    /// City identifier (e.g., FIPS or GeoNames ID)
+    /// City identifier OSM ID
     /// </summary>
     public string? CityIdentifier { get; init; }
 
     /// <summary>
-    /// City name in Latin transliteration (invariant)
-    /// Required if the point is within a city's territory
+    /// City name in Latin transliteration (invariant) or translation into English
     /// </summary>
     public string? CityNameLatin { get; init; }
 
