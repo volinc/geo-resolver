@@ -59,7 +59,7 @@ public sealed class GeoLocationService
 
         var point = $"POINT({longitude} {latitude})";
         await using var cmd = new NpgsqlCommand(@"
-            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, geometry
+            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry
             FROM countries
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -72,10 +72,11 @@ public sealed class GeoLocationService
             return new Country
             {
                 Id = reader.GetInt32(0),
-                IsoAlpha2Code = reader.IsDBNull(1) ? null : reader.GetString(1),
-                IsoAlpha3Code = reader.IsDBNull(2) ? null : reader.GetString(2),
+                IsoAlpha2Code = reader.GetString(1),
+                IsoAlpha3Code = reader.GetString(2),
                 NameLatin = reader.GetString(3),
-                Geometry = (Geometry)reader.GetValue(4)
+                WikidataId = reader.GetString(4),
+                Geometry = (Geometry)reader.GetValue(5)
             };
         }
 
@@ -89,7 +90,7 @@ public sealed class GeoLocationService
 
         var point = $"POINT({longitude} {latitude})";
         await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry
+            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, name_local, geometry
             FROM regions
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -104,9 +105,11 @@ public sealed class GeoLocationService
                 Id = reader.GetInt32(0),
                 Identifier = reader.GetString(1),
                 NameLatin = reader.GetString(2),
-                CountryIsoAlpha2Code = reader.IsDBNull(3) ? null : reader.GetString(3),
-                CountryIsoAlpha3Code = reader.IsDBNull(4) ? null : reader.GetString(4),
-                Geometry = (Geometry)reader.GetValue(5)
+                CountryIsoAlpha2Code = reader.GetString(3),
+                CountryIsoAlpha3Code = reader.GetString(4),
+                WikidataId = reader.GetString(5),
+                NameLocal = reader.GetString(6),
+                Geometry = (Geometry)reader.GetValue(7)
             };
         }
 
@@ -120,7 +123,7 @@ public sealed class GeoLocationService
 
         var point = $"POINT({longitude} {latitude})";
         await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry
+            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, name_local, geometry
             FROM cities
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -135,10 +138,11 @@ public sealed class GeoLocationService
                 Id = reader.GetInt32(0),
                 Identifier = reader.GetString(1),
                 NameLatin = reader.GetString(2),
-                CountryIsoAlpha2Code = reader.IsDBNull(3) ? null : reader.GetString(3),
-                CountryIsoAlpha3Code = reader.IsDBNull(4) ? null : reader.GetString(4),
+                CountryIsoAlpha2Code = reader.GetString(3),
+                CountryIsoAlpha3Code = reader.GetString(4),
                 RegionIdentifier = reader.IsDBNull(5) ? null : reader.GetString(5),
-                Geometry = (Geometry)reader.GetValue(6)
+                NameLocal = reader.GetString(6),
+                Geometry = (Geometry)reader.GetValue(7)
             };
         }
 

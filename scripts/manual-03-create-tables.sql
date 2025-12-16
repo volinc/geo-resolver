@@ -17,13 +17,12 @@ ON CONFLICT (id) DO NOTHING;
 -- Create countries table
 CREATE TABLE IF NOT EXISTS countries (
     id SERIAL PRIMARY KEY,
-    iso_alpha2_code TEXT COLLATE "C",
-    iso_alpha3_code TEXT COLLATE "C",
+    iso_alpha2_code TEXT COLLATE "C" NOT NULL,
+    iso_alpha3_code TEXT COLLATE "C" NOT NULL,
     name_latin TEXT COLLATE "C" NOT NULL,
-    wikidataid VARCHAR(20) COLLATE "C",
+    wikidataid VARCHAR(20) COLLATE "C" NOT NULL,
     name_local TEXT,
     geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    CONSTRAINT countries_iso_code_check CHECK (iso_alpha2_code IS NOT NULL OR iso_alpha3_code IS NOT NULL),
     CONSTRAINT countries_iso_alpha2_unique UNIQUE (iso_alpha2_code),
     CONSTRAINT countries_iso_alpha3_unique UNIQUE (iso_alpha3_code)
 );
@@ -39,12 +38,11 @@ CREATE TABLE IF NOT EXISTS regions (
     id SERIAL PRIMARY KEY,
     identifier VARCHAR(20) COLLATE "C" NOT NULL,
     name_latin TEXT COLLATE "C" NOT NULL,
-    country_iso_alpha2_code TEXT COLLATE "C",
-    country_iso_alpha3_code TEXT COLLATE "C",
-    wikidataid VARCHAR(20) COLLATE "C",
-    name_local TEXT,
-    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    CONSTRAINT regions_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
+    country_iso_alpha2_code TEXT COLLATE "C" NOT NULL,
+    country_iso_alpha3_code TEXT COLLATE "C" NOT NULL,
+    wikidataid VARCHAR(20) COLLATE "C" NOT NULL,
+    name_local TEXT NOT NULL,
+    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL
 );
 
 -- Create indexes for regions
@@ -59,13 +57,12 @@ CREATE TABLE IF NOT EXISTS cities (
     id SERIAL PRIMARY KEY,
     identifier VARCHAR(20) COLLATE "C" NOT NULL,
     name_latin TEXT COLLATE "C" NOT NULL,
-    country_iso_alpha2_code TEXT COLLATE "C",
-    country_iso_alpha3_code TEXT COLLATE "C",
+    country_iso_alpha2_code TEXT COLLATE "C" NOT NULL,
+    country_iso_alpha3_code TEXT COLLATE "C" NOT NULL,
     region_identifier VARCHAR(20) COLLATE "C",
     wikidataid VARCHAR(20) COLLATE "C",
-    name_local TEXT,
-    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    CONSTRAINT cities_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
+    name_local TEXT NOT NULL,
+    geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL
 );
 
 -- Create indexes for cities

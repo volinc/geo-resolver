@@ -97,50 +97,35 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		foreach (var country in countries)
 		{
-			// Build query based on which codes are available
-			string insertQuery;
-			if (!string.IsNullOrWhiteSpace(country.IsoAlpha2Code) && !string.IsNullOrWhiteSpace(country.IsoAlpha3Code))
-				insertQuery = @"
+			// Both ISO codes and wikidataid are now required
+			if (string.IsNullOrWhiteSpace(country.IsoAlpha2Code) || string.IsNullOrWhiteSpace(country.IsoAlpha3Code))
+				throw new InvalidOperationException(
+					$"Country '{country.NameLatin}' must have both ISO codes (alpha-2 and alpha-3)");
+			
+			if (string.IsNullOrWhiteSpace(country.WikidataId))
+				throw new InvalidOperationException(
+					$"Country '{country.NameLatin}' must have a wikidataid");
+
+			var insertQuery = @"
                     INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
                     VALUES (@isoAlpha2Code, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromWKB(@geometry, 4326))
                 ON CONFLICT (iso_alpha2_code) DO UPDATE
-                    SET iso_alpha3_code = COALESCE(EXCLUDED.iso_alpha3_code, countries.iso_alpha3_code),
+                    SET iso_alpha3_code = EXCLUDED.iso_alpha3_code,
                         name_latin = EXCLUDED.name_latin, 
                         wikidataid = EXCLUDED.wikidataid,
                         geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(country.IsoAlpha2Code))
-				insertQuery = @"
-                    INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                    VALUES (@isoAlpha2Code, NULL, @name, @wikidataid, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (iso_alpha2_code) DO UPDATE
-                    SET name_latin = EXCLUDED.name_latin, 
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(country.IsoAlpha3Code))
-				insertQuery = @"
-                    INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                    VALUES (NULL, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (iso_alpha3_code) DO UPDATE
-                    SET name_latin = EXCLUDED.name_latin, 
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
-			else
-				throw new InvalidOperationException(
-					$"Country '{country.NameLatin}' must have at least one ISO code (alpha-2 or alpha-3)");
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
 			var wkbWriter = new WKBWriter();
 			var wkb = wkbWriter.Write(country.Geometry);
 
-			if (!string.IsNullOrWhiteSpace(country.IsoAlpha2Code))
-				cmd.Parameters.AddWithValue("isoAlpha2Code", country.IsoAlpha2Code);
-			if (!string.IsNullOrWhiteSpace(country.IsoAlpha3Code))
-				cmd.Parameters.AddWithValue("isoAlpha3Code", country.IsoAlpha3Code);
+			cmd.Parameters.AddWithValue("isoAlpha2Code", country.IsoAlpha2Code);
+			cmd.Parameters.AddWithValue("isoAlpha3Code", country.IsoAlpha3Code);
 			// Apply CleanTransliterationResult to name_latin for countries
 			var cleanedNameLatin = _transliterationService.CleanTransliterationResult(country.NameLatin);
 			cmd.Parameters.AddWithValue("name", cleanedNameLatin);
-			cmd.Parameters.AddWithValue("wikidataid", country.WikidataId ?? (object)DBNull.Value);
+			cmd.Parameters.AddWithValue("wikidataid", country.WikidataId);
 			cmd.Parameters.AddWithValue("geometry", NpgsqlDbType.Bytea, wkb);
 			await cmd.ExecuteNonQueryAsync(cancellationToken);
 		}
@@ -288,11 +273,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// At least one ISO code must be present
-			if (string.IsNullOrWhiteSpace(isoAlpha2Code) && string.IsNullOrWhiteSpace(isoAlpha3Code))
+			// Both ISO codes and wikidataid are now required
+			if (string.IsNullOrWhiteSpace(isoAlpha2Code) || string.IsNullOrWhiteSpace(isoAlpha3Code))
 			{
 				skipped++;
-				var reason = "Missing or invalid ISO code";
+				var reason = "Missing or invalid ISO code (both alpha-2 and alpha-3 required)";
 				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 
 				// Log first few skipped features for debugging
@@ -307,78 +292,46 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				continue;
 			}
 
+			// wikidataid is now required
+			if (string.IsNullOrWhiteSpace(wikidataId))
+			{
+				skipped++;
+				var reason = "Missing or invalid wikidataid";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+
+				// Log first few skipped features for debugging
+				if (skipped <= 10)
+				{
+					_logger?.LogDebug("Skipped country '{Name}' - missing wikidataid", nameLatin);
+				}
+
+				continue;
+			}
+
 			var geometryJson = geometryElement.GetRawText();
 
 			try
 			{
-				// Build the INSERT query dynamically based on which codes we have
-				// If we have both codes, try insert with ON CONFLICT on alpha-2 first
-				// If that fails due to alpha-3 conflict, handle it separately
-				if (!string.IsNullOrWhiteSpace(isoAlpha2Code) && !string.IsNullOrWhiteSpace(isoAlpha3Code))
-				{
-					// Both codes available - try insert with conflict on alpha-2
-					await using var cmd = new NpgsqlCommand(@"
+				// Both codes and wikidataid are available
+				await using var cmd = new NpgsqlCommand(@"
                         INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
                         VALUES (@isoAlpha2Code, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
                         ON CONFLICT (iso_alpha2_code) DO UPDATE
-                        SET iso_alpha3_code = COALESCE(EXCLUDED.iso_alpha3_code, countries.iso_alpha3_code),
+                        SET iso_alpha3_code = EXCLUDED.iso_alpha3_code,
                             name_latin = EXCLUDED.name_latin, 
                             wikidataid = EXCLUDED.wikidataid,
                             geometry = EXCLUDED.geometry;", connection, transaction);
 
-					cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
-					cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code);
-					// Apply CleanTransliterationResult to name_latin for countries
-					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
-					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
-					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
-					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
+				cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
+				cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code);
+				// Apply CleanTransliterationResult to name_latin for countries
+				var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
+				cmd.Parameters.AddWithValue("name", cleanedNameLatin);
+				cmd.Parameters.AddWithValue("wikidataid", wikidataId);
+				cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
-					await cmd.ExecuteNonQueryAsync(cancellationToken);
-					processed++;
-				}
-				else if (!string.IsNullOrWhiteSpace(isoAlpha2Code))
-				{
-					// Only alpha-2
-					await using var cmd = new NpgsqlCommand(@"
-                        INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                        VALUES (@isoAlpha2Code, NULL, @name, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                        ON CONFLICT (iso_alpha2_code) DO UPDATE
-                        SET name_latin = EXCLUDED.name_latin, 
-                            wikidataid = EXCLUDED.wikidataid,
-                            geometry = EXCLUDED.geometry;", connection, transaction);
-
-					cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
-					// Apply CleanTransliterationResult to name_latin for countries
-					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
-					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
-					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
-					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
-
-					await cmd.ExecuteNonQueryAsync(cancellationToken);
-					processed++;
-				}
-				else
-				{
-					// Only alpha-3
-					await using var cmd = new NpgsqlCommand(@"
-                        INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                        VALUES (NULL, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                        ON CONFLICT (iso_alpha3_code) DO UPDATE
-                        SET name_latin = EXCLUDED.name_latin, 
-                            wikidataid = EXCLUDED.wikidataid,
-                            geometry = EXCLUDED.geometry;", connection, transaction);
-
-					cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code!); // Not null in this branch
-					// Apply CleanTransliterationResult to name_latin for countries
-					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
-					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
-					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
-					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
-
-					await cmd.ExecuteNonQueryAsync(cancellationToken);
-					processed++;
-				}
+				await cmd.ExecuteNonQueryAsync(cancellationToken);
+				processed++;
 			}
 			catch (PostgresException pgEx) when (pgEx.SqlState == "23505" &&
 			                                     pgEx.ConstraintName?.Contains("iso_alpha3") == true)
@@ -579,7 +532,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var processed = 0;
 		var skipped = 0;
 		var skippedReasons = new Dictionary<string, int>();
-		var onlyAlpha3Count = 0;
 
 		foreach (var featureElement in features.EnumerateArray())
 		{
@@ -696,6 +648,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 
 			// If we have alpha-2 but not alpha-3, try to get alpha-3 from countries table
+			// Both codes are now required
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 			{
 				try
@@ -714,11 +667,20 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 				catch (Exception ex)
 				{
-					// Log but don't fail - we can still insert with just alpha-2
+					// Log but don't fail - we'll skip this region if alpha-3 is not found
 					_logger?.LogDebug(ex,
 						"Failed to lookup alpha-3 code for alpha-2 {Alpha2} from countries table",
 						countryIsoAlpha2Code);
 				}
+			}
+			
+			// Both country codes are now required
+			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) || string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+			{
+				skipped++;
+				var reason = "Missing or invalid country ISO code (both alpha-2 and alpha-3 required)";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+				continue;
 			}
 
 			// Get region name - try name_local first, then name
@@ -849,84 +811,27 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			var geometryJson = geometryElement.GetRawText();
 
-			// Build the INSERT query dynamically based on which codes we have
-			// Use partial unique indexes to handle NULL values properly
-			string insertQuery;
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-			{
-				// Both codes available
-				insertQuery = @"
+			// Both codes, wikidataid, and name_local are now required
+			var insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, geometry)
                     VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
-                        country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
+                    SET country_iso_alpha2_code = EXCLUDED.country_iso_alpha2_code,
+                        country_iso_alpha3_code = EXCLUDED.country_iso_alpha3_code,
                         name_latin = EXCLUDED.name_latin, 
                         name_local = EXCLUDED.name_local,
                         wikidataid = EXCLUDED.wikidataid,
                         geometry = EXCLUDED.geometry;";
-			}
-			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-			{
-				// Only alpha-2 (or alpha-3 was looked up from countries table)
-				if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				{
-					// We have both codes now (alpha-3 was looked up)
-					insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, geometry)
-                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
-                        country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
-				}
-				else
-				{
-					// Still only alpha-2 (lookup failed or not found)
-				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, geometry)
-                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
-				}
-			}
-			else
-			{
-				// Only alpha-3
-				onlyAlpha3Count++;
-				if (onlyAlpha3Count <= 5)
-					_logger?.LogInformation(
-						"Inserting region with only alpha-3 code: identifier={Identifier}, alpha3={Alpha3}", identifier,
-						countryIsoAlpha3Code);
-				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, geometry)
-                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
-			}
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
 			// Apply Trim() to name_local for regions (nameLocal already trimmed when extracted from GeoJSON)
-			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
-			cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				cmd.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
+			cmd.Parameters.AddWithValue("nameLocal", nameLocal!);
+			cmd.Parameters.AddWithValue("wikidataid", wikidataId!);
+			cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code!);
+			cmd.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code!);
 			cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
 			try
@@ -967,7 +872,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		// Log summary
 		_logger?.LogInformation("Regions import: processed={Processed}, skipped={Skipped}", processed, skipped);
-		_logger?.LogInformation("  Regions with only alpha-3 code (NULL in alpha-2): {OnlyAlpha3}", onlyAlpha3Count);
 		foreach (var reason in skippedReasons)
 			_logger?.LogInformation("  Skipped reason '{Reason}': {Count}", reason.Key, reason.Value);
 
@@ -1012,40 +916,24 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		foreach (var city in cities)
 		{
-			// Build query based on which codes are available
-			string insertQuery;
-			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code) &&
-			    !string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
-				insertQuery = @"
+			// Both country codes and name_local are now required
+			if (string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code) || string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
+				throw new InvalidOperationException(
+					$"City '{city.NameLatin}' must have both country ISO codes (alpha-2 and alpha-3)");
+			
+			if (string.IsNullOrWhiteSpace(city.NameLocal))
+				throw new InvalidOperationException(
+					$"City '{city.NameLatin}' must have a name_local");
+
+			var insertQuery = @"
                     INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
                     VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
+                    SET country_iso_alpha2_code = EXCLUDED.country_iso_alpha2_code,
+                        country_iso_alpha3_code = EXCLUDED.country_iso_alpha3_code,
                         name_latin = EXCLUDED.name_latin, 
                         name_local = EXCLUDED.name_local,
                         region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code))
-				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
-				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
-			else
-				throw new InvalidOperationException(
-					$"City '{city.NameLatin}' must have at least one country ISO code (alpha-2 or alpha-3)");
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
@@ -1055,12 +943,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			cmd.Parameters.AddWithValue("identifier", city.Identifier);
 			cmd.Parameters.AddWithValue("name", city.NameLatin);
 			// Apply Trim() to name_local for cities
-			var trimmedCityNameLocal = city.NameLocal?.Trim();
-			cmd.Parameters.AddWithValue("nameLocal", trimmedCityNameLocal ?? (object)DBNull.Value);
-			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code))
-				cmd.Parameters.AddWithValue("countryAlpha2Code", city.CountryIsoAlpha2Code);
-			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
-				cmd.Parameters.AddWithValue("countryAlpha3Code", city.CountryIsoAlpha3Code);
+			var trimmedCityNameLocal = city.NameLocal.Trim();
+			cmd.Parameters.AddWithValue("nameLocal", trimmedCityNameLocal);
+			cmd.Parameters.AddWithValue("countryAlpha2Code", city.CountryIsoAlpha2Code);
+			cmd.Parameters.AddWithValue("countryAlpha3Code", city.CountryIsoAlpha3Code);
 			cmd.Parameters.AddWithValue("regionIdentifier", city.RegionIdentifier ?? (object) DBNull.Value);
 			cmd.Parameters.AddWithValue("geometry", NpgsqlDbType.Bytea, wkb);
 			await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -1232,7 +1118,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					countryIsoAlpha3Code = alpha3Value.ToUpperInvariant();
 			}
 
-			// At least one ISO code must be present
+			// Both ISO codes are now required
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 			{
 				if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha2Code))
@@ -1243,27 +1129,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					{
 						countryIsoAlpha3Code = defaultCountryIsoAlpha3Code;
 					}
-				}
-				else
-				{
-					skipped++;
-					var reason = "Missing or invalid country ISO code";
-					skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
-
-					// Log first few skipped cities for debugging
-					if (skipped <= 10)
-					{
-						var cityName = properties.TryGetProperty("name", out var nameProp) &&
-						               nameProp.ValueKind == JsonValueKind.String
-							? nameProp.GetString()
-							: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
-							  nameAsciiProp.ValueKind == JsonValueKind.String
-								? nameAsciiProp.GetString()
-								: "Unknown";
-						_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
-					}
-
-					continue;
 				}
 			}
 			// If we have alpha-2 but not alpha-3, and we have default alpha-3, use it
@@ -1276,10 +1141,34 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					countryIsoAlpha3Code = defaultCountryIsoAlpha3Code;
 				}
 			}
+			
+			// Both country codes are now required
+			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) || string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+			{
+				skipped++;
+				var reason = "Missing or invalid country ISO code (both alpha-2 and alpha-3 required)";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+
+				// Log first few skipped cities for debugging
+				if (skipped <= 10)
+				{
+					var cityName = properties.TryGetProperty("name", out var nameProp) &&
+					               nameProp.ValueKind == JsonValueKind.String
+						? nameProp.GetString()
+						: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
+						  nameAsciiProp.ValueKind == JsonValueKind.String
+							? nameAsciiProp.GetString()
+							: "Unknown";
+					_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
+				}
+
+				continue;
+			}
 
 			// Get city name - try name_local first, then name
 			// name_local stores original (non-transliterated) value
 			// name_latin stores transliterated value
+			// name_local is now required
 			string? nameLocal = null;
 			
 			// First try name_local (local name in original language)
@@ -1295,6 +1184,15 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLocal = value.Trim();
+			}
+			
+			// name_local is now required
+			if (string.IsNullOrWhiteSpace(nameLocal))
+			{
+				skipped++;
+				var reason = "Missing city name (name_local)";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+				continue;
 			}
 			
 			// If no name found, skip
@@ -1397,36 +1295,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Build the INSERT query dynamically based on which codes we have
-			string insertQuery;
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				// Both codes available
-				insertQuery = @"
+			// Both country codes and name_local are now required
+			var insertQuery = @"
                     INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
                     VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
-			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				// Only alpha-2
-				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, 
-                        name_local = EXCLUDED.name_local,
-                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
-			else
-				// Only alpha-3
-				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (identifier) DO UPDATE
-                    SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
+                    SET country_iso_alpha2_code = EXCLUDED.country_iso_alpha2_code,
+                        country_iso_alpha3_code = EXCLUDED.country_iso_alpha3_code,
                         name_latin = EXCLUDED.name_latin, 
                         name_local = EXCLUDED.name_local,
                         region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
@@ -1437,10 +1312,8 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			cmd.Parameters.AddWithValue("name", nameLatin);
 			// Apply Trim() to name_local for cities (nameLocal already trimmed when extracted from GeoJSON)
 			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
-			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				cmd.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
+			cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
+			cmd.Parameters.AddWithValue("countryAlpha3Code", countryIsoAlpha3Code);
 			cmd.Parameters.AddWithValue("regionIdentifier", regionIdentifier ?? (object) DBNull.Value);
 			cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
@@ -1611,7 +1484,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		var point = $"POINT({longitude} {latitude})";
 		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, geometry
+            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry
             FROM countries
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -1623,10 +1496,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			return new Country
 			{
 				Id = reader.GetInt32(0),
-				IsoAlpha2Code = reader.IsDBNull(1) ? null : reader.GetString(1),
-				IsoAlpha3Code = reader.IsDBNull(2) ? null : reader.GetString(2),
+				IsoAlpha2Code = reader.GetString(1),
+				IsoAlpha3Code = reader.GetString(2),
 				NameLatin = reader.GetString(3),
-				Geometry = (Geometry) reader.GetValue(4)
+				WikidataId = reader.GetString(4),
+				Geometry = (Geometry) reader.GetValue(5)
 			};
 
 		return null;
@@ -1640,7 +1514,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		var point = $"POINT({longitude} {latitude})";
 		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry
+            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, name_local, geometry
             FROM regions
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -1654,9 +1528,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				Id = reader.GetInt32(0),
 				Identifier = reader.GetString(1),
 				NameLatin = reader.GetString(2),
-				CountryIsoAlpha2Code = reader.IsDBNull(3) ? null : reader.GetString(3),
-				CountryIsoAlpha3Code = reader.IsDBNull(4) ? null : reader.GetString(4),
-				Geometry = (Geometry) reader.GetValue(5)
+				CountryIsoAlpha2Code = reader.GetString(3),
+				CountryIsoAlpha3Code = reader.GetString(4),
+				WikidataId = reader.GetString(5),
+				NameLocal = reader.GetString(6),
+				Geometry = (Geometry) reader.GetValue(7)
 			};
 
 		return null;
@@ -1671,7 +1547,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var point = $"POINT({longitude} {latitude})";
 		// Cities use MULTIPOLYGON geometries (city boundaries), so we use ST_Contains to check if point is within the boundary
 		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry
+            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, name_local, geometry
             FROM cities
             WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
             LIMIT 1;", connection);
@@ -1685,10 +1561,11 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				Id = reader.GetInt32(0),
 				Identifier = reader.GetString(1),
 				NameLatin = reader.GetString(2),
-				CountryIsoAlpha2Code = reader.IsDBNull(3) ? null : reader.GetString(3),
-				CountryIsoAlpha3Code = reader.IsDBNull(4) ? null : reader.GetString(4),
+				CountryIsoAlpha2Code = reader.GetString(3),
+				CountryIsoAlpha3Code = reader.GetString(4),
 				RegionIdentifier = reader.IsDBNull(5) ? null : reader.GetString(5),
-				Geometry = (Geometry) reader.GetValue(6)
+				NameLocal = reader.GetString(6),
+				Geometry = (Geometry) reader.GetValue(7)
 			};
 
 		return null;
