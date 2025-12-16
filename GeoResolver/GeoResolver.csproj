@@ -18,7 +18,14 @@
     <EventSourceSupport>false</EventSourceSupport>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EnableSslCertificateGeneration>false</EnableSslCertificateGeneration>
+    
+    <!-- Use lld linker for cross-platform compatibility (ARM to x86_64) -->
+    <CppCompilerAndLinker>clang</CppCompilerAndLinker>
   </PropertyGroup>
+  
+  <ItemGroup>
+    <LinkerArg Include="-fuse-ld=lld" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.0" />

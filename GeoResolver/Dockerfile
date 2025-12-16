@@ -9,11 +9,14 @@ ENV ASPNETCORE_URLS=http://+:8080
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
-# Install Native AOT prerequisites (clang and required libraries)
+# Install Native AOT prerequisites for cross-compilation (ARM to x86_64)
+# Install clang, lld linker, and x86_64 cross-compilation tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     clang \
+    lld \
     zlib1g-dev \
+    binutils-x86-64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY ["GeoResolver/GeoResolver.csproj", "GeoResolver/"]
@@ -25,6 +28,11 @@ RUN dotnet build "./GeoResolver.csproj" -c $BUILD_CONFIGURATION -o /app/build
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 # Publish as Native AOT with self-contained and full trimming
+# Use lld linker for cross-platform compatibility (ARM to x86_64)
+# Set environment variables to use lld linker
+ENV CC=clang
+ENV CXX=clang++
+ENV LDFLAGS="-fuse-ld=lld"
 RUN dotnet publish "./GeoResolver.csproj" \
     -c $BUILD_CONFIGURATION \
     -o /app/publish \

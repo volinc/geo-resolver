@@ -34,6 +34,7 @@ services:
     build:
       context: .
       dockerfile: GeoResolver/Dockerfile
+    platform: linux/amd64
     container_name: geo-resolver-api
     depends_on:
       postgres:
