@@ -29,7 +29,7 @@ public sealed record GeoLocationResponse
     public string? RegionNameLatin { get; init; }
 
     /// <summary>
-    /// City identifier OSM ID
+    /// City identifier OSM ID (unsafe - may change with the next data update)
     /// </summary>
     public string? CityIdentifier { get; init; }
 
