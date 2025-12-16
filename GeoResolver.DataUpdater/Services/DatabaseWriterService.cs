@@ -632,63 +632,38 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Get region name - prioritize local name (original), use English as fallback
-			// Will be transliterated to Latin in post-processing if needed
-			// Natural Earth has: name_local (local name), name (transliterated), name_en (English), etc.
-			// Note: Names are NOT unique within a country - uniqueness is determined by identifier
-			var nameLatin = "Unknown";
+			// Get region name - try name_local first, then name
+			// name_local stores original (non-transliterated) value
+			// name_latin stores transliterated value
 			string? nameLocal = null;
 			
-			// First try name_local (local name in original language) - this is what we want
+			// First try name_local (local name in original language)
 			if (properties.TryGetProperty("name_local", out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
 			{
 				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-				{
-					nameLatin = value; // Use local name (original), will be transliterated later if needed
-					nameLocal = value; // Store for name_local field
-				}
+					nameLocal = value;
 			}
-			// Then try name (transliterated name)
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			// Then try name
+			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value; // Use transliterated name, will be transliterated later if needed
+					nameLocal = value;
 			}
-			// Try NAME (uppercase)
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("NAME", out var nameUpper) &&
-			         nameUpper.ValueKind == JsonValueKind.String)
-			{
-				var value = nameUpper.GetString();
-				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value; // Use local name (original), will be transliterated later if needed
-			}
-			// Fallback to name_en (English name)
-			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
-			    properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
-			{
-				var value = nameEn.GetString();
-				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value; // Fallback to English name if local name not available
-			}
-
-			// Skip only if absolutely no name is available
-			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
+			
+			// If no name found, skip
+			if (nameLocal == null)
 			{
 				skipped++;
 				var reason = "Missing region name";
 				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
-				// Log first few skipped regions for debugging
-				if (skipped <= 10)
-				{
-					_logger?.LogDebug("Skipped region - missing/invalid name. Properties: {Properties}",
-						properties.GetRawText());
-				}
 				continue;
 			}
+			
+			// Transliterate for name_latin
+			var nameLatin = _transliterationService.TransliterateToLatin(nameLocal) ?? nameLocal;
+
 
 			// Generate identifier - prefer ISO 3166-2 code (most unique), then postal code, then use name + country code
 			// Natural Earth Admin 1 has iso_3166_2 (e.g., "RU-MOW", "RU-MOS") which is unique per region
@@ -1197,60 +1172,37 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 
-			// Get city name - prioritize local name (original), use ASCII/English as fallback
-			// OSM/Geofabrik shapefile fields: name (original, local), nameascii (ASCII transliteration), name_en (English)
-			// Will be transliterated to Latin in post-processing if needed
-			var nameLatin = "Unknown";
+			// Get city name - try name_local first, then name
+			// name_local stores original (non-transliterated) value
+			// name_latin stores transliterated value
 			string? nameLocal = null;
-			if (properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
+			
+			// First try name_local (local name in original language)
+			if (properties.TryGetProperty("name_local", out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
 			{
-				var value = originalName.GetString();
+				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-				{
-					nameLatin = value; // Use local name (original), will be transliterated later if needed
-					nameLocal = value; // Store for name_local field (no transliteration)
-				}
+					nameLocal = value;
 			}
-			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
-			         nameUpper.ValueKind == JsonValueKind.String)
+			// Then try name
+			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
 			{
-				var value = nameUpper.GetString();
+				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value; // Use local name (original), will be transliterated later if needed
+					nameLocal = value;
 			}
-			// Fallback to ASCII transliteration if local name not available
-			else if (properties.TryGetProperty("NAMEASCII", out var nameAsciiUpper) &&
-			    nameAsciiUpper.ValueKind == JsonValueKind.String)
-			{
-				var value = nameAsciiUpper.GetString();
-				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value;
-			}
-			else if (properties.TryGetProperty("nameascii", out var nameAscii) &&
-			         nameAscii.ValueKind == JsonValueKind.String)
-			{
-				var value = nameAscii.GetString();
-				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value;
-			}
-			// Fallback to English name if local and ASCII not available
-			else if (properties.TryGetProperty("name_en", out var nameEn) &&
-			         nameEn.ValueKind == JsonValueKind.String)
-			{
-				var value = nameEn.GetString();
-				if (!string.IsNullOrWhiteSpace(value))
-					nameLatin = value;
-			}
-
-
-			// Skip only if absolutely no name is available
-			if (string.IsNullOrWhiteSpace(nameLatin) || nameLatin == "Unknown")
+			
+			// If no name found, skip
+			if (nameLocal == null)
 			{
 				skipped++;
 				var reason = "Missing city name";
 				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 				continue;
 			}
+			
+			// For cities, name_latin is the same as name_local (no transliteration)
+			var nameLatin = nameLocal;
 
 			// Get geometry JSON
 			var geometryJson = geometryElement.GetRawText();
