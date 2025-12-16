@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -358,14 +359,132 @@ public sealed class CityPostProcessor : ICityPostProcessor
 	}
 
 	/// <summary>
-	///     Post-processes imported regions: transliterates non-Latin names to Latin.
+	///     Post-processes imported regions: validates identifier format and transliterates non-Latin names to Latin.
 	/// </summary>
 	public async Task PostProcessRegionsAsync(CancellationToken cancellationToken = default)
 	{
-		_logger?.LogInformation("Starting post-processing of regions: transliterating names");
+		_logger?.LogInformation("Starting post-processing of regions: validating identifiers and transliterating names");
 		
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
+
+		// Step 1: Delete regions where identifier prefix (before '-' or '_') doesn't match country_iso_alpha2_code
+		var deletedCount = 0;
+		try
+		{
+			_logger?.LogInformation("Validating region identifiers: checking if identifier prefix matches country_iso_alpha2_code");
+			
+			// Find regions where identifier contains '-' or '_' and extract prefix
+			var invalidRegions = new List<(int Id, string Identifier, string? CountryAlpha2)>();
+			
+			await using (var selectCmd = new NpgsqlCommand(@"
+                SELECT id, identifier, country_iso_alpha2_code
+                FROM regions
+                WHERE (identifier LIKE '%-%' OR identifier LIKE '%_%')
+                  AND country_iso_alpha2_code IS NOT NULL;", connection))
+			{
+				selectCmd.CommandTimeout = 60;
+				await using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken);
+				
+				while (await reader.ReadAsync(cancellationToken))
+				{
+					var id = reader.GetInt32(0);
+					var identifier = reader.GetString(1);
+					var countryAlpha2 = reader.GetString(2);
+					
+					// Extract prefix before '-' or '_' (whichever comes first)
+					var dashIndex = identifier.IndexOf('-');
+					var underscoreIndex = identifier.IndexOf('_');
+					
+					int separatorIndex = -1;
+					if (dashIndex >= 0 && underscoreIndex >= 0)
+					{
+						// Use the first separator found
+						separatorIndex = Math.Min(dashIndex, underscoreIndex);
+					}
+					else if (dashIndex >= 0)
+					{
+						separatorIndex = dashIndex;
+					}
+					else if (underscoreIndex >= 0)
+					{
+						separatorIndex = underscoreIndex;
+					}
+					
+					if (separatorIndex > 0)
+					{
+						var prefix = identifier.Substring(0, separatorIndex);
+						
+						// Compare prefix with country_iso_alpha2_code (case-insensitive)
+						if (!string.Equals(prefix, countryAlpha2, StringComparison.OrdinalIgnoreCase))
+						{
+							invalidRegions.Add((id, identifier, countryAlpha2));
+						}
+					}
+				}
+			}
+			
+			if (invalidRegions.Count > 0)
+			{
+				_logger?.LogWarning("Found {Count} regions with identifier prefix mismatch. These will be deleted:", invalidRegions.Count);
+				foreach (var region in invalidRegions.Take(10)) // Log first 10
+				{
+					// Extract prefix for logging
+					var dashIndex = region.Identifier.IndexOf('-');
+					var underscoreIndex = region.Identifier.IndexOf('_');
+					int separatorIndex = -1;
+					if (dashIndex >= 0 && underscoreIndex >= 0)
+						separatorIndex = Math.Min(dashIndex, underscoreIndex);
+					else if (dashIndex >= 0)
+						separatorIndex = dashIndex;
+					else if (underscoreIndex >= 0)
+						separatorIndex = underscoreIndex;
+					
+					var prefix = separatorIndex > 0 ? region.Identifier.Substring(0, separatorIndex) : "N/A";
+					_logger?.LogWarning("  - ID {Id}: identifier='{Identifier}' (prefix='{Prefix}'), country_iso_alpha2_code='{Country}' - REASON: Prefix doesn't match country code", 
+						region.Id, region.Identifier, prefix, region.CountryAlpha2);
+				}
+				if (invalidRegions.Count > 10)
+				{
+					_logger?.LogWarning("  ... and {Count} more regions", invalidRegions.Count - 10);
+				}
+				
+				// Delete invalid regions
+				await using var deleteTransaction = await connection.BeginTransactionAsync(cancellationToken);
+				try
+				{
+					// Delete regions one by one (safer approach)
+					foreach (var region in invalidRegions)
+					{
+						await using var deleteCmd = new NpgsqlCommand(@"
+                            DELETE FROM regions
+                            WHERE id = @regionId;", connection, deleteTransaction);
+						
+						deleteCmd.Parameters.AddWithValue("regionId", region.Id);
+						await deleteCmd.ExecuteNonQueryAsync(cancellationToken);
+						deletedCount++;
+					}
+					
+					await deleteTransaction.CommitAsync(cancellationToken);
+					
+					_logger?.LogInformation("Deleted {Count} regions with identifier prefix mismatch", deletedCount);
+				}
+				catch (Exception ex)
+				{
+					await deleteTransaction.RollbackAsync(cancellationToken);
+					_logger?.LogError(ex, "Failed to delete regions with identifier prefix mismatch, transaction rolled back");
+					throw;
+				}
+			}
+			else
+			{
+				_logger?.LogInformation("All regions have valid identifier prefixes matching their country codes");
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Failed to validate region identifiers");
+		}
 
 		_logger?.LogInformation("Post-processing regions: transliterating names");
 
@@ -455,6 +574,7 @@ public sealed class CityPostProcessor : ICityPostProcessor
 			_logger?.LogWarning(ex, "Failed to transliterate some region names");
 		}
 
-		_logger?.LogInformation("Region post-processing completed: transliterated {TransliterationCount} names", transliterationCount);
+		_logger?.LogInformation("Region post-processing completed: deleted {DeletedCount} invalid regions, transliterated {TransliterationCount} names", 
+			deletedCount, transliterationCount);
 	}
 }
