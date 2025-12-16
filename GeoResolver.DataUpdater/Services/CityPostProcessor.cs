@@ -104,8 +104,9 @@ public sealed class CityPostProcessor : ICityPostProcessor
 					foreach (var (id, originalName, countryAlpha2, countryAlpha3) in citiesToUpdate)
 					{
 						var transliterated = _transliterationService.TransliterateToLatin(originalName);
-						if (!string.IsNullOrWhiteSpace(transliterated) && _transliterationService.ContainsLatinCharacters(transliterated))
+						if (!string.IsNullOrWhiteSpace(transliterated))
 						{
+							// Update with transliterated name - it should already be in Latin after transliteration
 							await using var updateCmd = new NpgsqlCommand(@"
                                 UPDATE cities
                                 SET name_latin = @transliteratedName
@@ -115,9 +116,24 @@ public sealed class CityPostProcessor : ICityPostProcessor
 							await updateCmd.ExecuteNonQueryAsync(cancellationToken);
 							transliterationCount++;
 
-							if (transliterationCount % 100 == 0)
+							if (transliterationCount % 1000 == 0)
 							{
 								_logger?.LogInformation("Transliterated {Count} city names...", transliterationCount);
+							}
+							
+							// Log first few transliterations for debugging
+							if (transliterationCount <= 5)
+							{
+								_logger?.LogInformation("Transliterated city: '{Original}' -> '{Transliterated}'", 
+									originalName, transliterated);
+							}
+						}
+						else
+						{
+							// Log if transliteration failed
+							if (transliterationCount < 5)
+							{
+								_logger?.LogWarning("Transliteration failed for city ID {Id}, name: '{Name}'", id, originalName);
 							}
 						}
 					}
@@ -146,6 +162,8 @@ public sealed class CityPostProcessor : ICityPostProcessor
 	/// </summary>
 	public async Task PostProcessRegionsAsync(CancellationToken cancellationToken = default)
 	{
+		_logger?.LogInformation("Starting post-processing of regions: transliterating names");
+		
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
 
@@ -188,8 +206,9 @@ public sealed class CityPostProcessor : ICityPostProcessor
 					foreach (var (id, originalName) in regionsToUpdate)
 					{
 						var transliterated = _transliterationService.TransliterateToLatin(originalName);
-						if (!string.IsNullOrWhiteSpace(transliterated) && _transliterationService.ContainsLatinCharacters(transliterated))
+						if (!string.IsNullOrWhiteSpace(transliterated))
 						{
+							// Update with transliterated name - it should already be in Latin after transliteration
 							await using var updateCmd = new NpgsqlCommand(@"
                                 UPDATE regions
                                 SET name_latin = @transliteratedName
@@ -202,6 +221,21 @@ public sealed class CityPostProcessor : ICityPostProcessor
 							if (transliterationCount % 100 == 0)
 							{
 								_logger?.LogInformation("Transliterated {Count} region names...", transliterationCount);
+							}
+							
+							// Log first few transliterations for debugging
+							if (transliterationCount <= 5)
+							{
+								_logger?.LogInformation("Transliterated region: '{Original}' -> '{Transliterated}'", 
+									originalName, transliterated);
+							}
+						}
+						else
+						{
+							// Log if transliteration failed
+							if (transliterationCount < 5)
+							{
+								_logger?.LogWarning("Transliteration failed for region ID {Id}, name: '{Name}'", id, originalName);
 							}
 						}
 					}

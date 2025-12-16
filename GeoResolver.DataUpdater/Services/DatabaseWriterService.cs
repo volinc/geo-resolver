@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -449,6 +450,45 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 	public async Task ImportRegionsFromGeoJsonAsync(string geoJsonContent,
 		CancellationToken cancellationToken = default)
 	{
+		// Check if GeoJSON contains Moscow-related regions
+		var containsMoscow = geoJsonContent.Contains("Moscow", StringComparison.OrdinalIgnoreCase) ||
+		                   geoJsonContent.Contains("Московская", StringComparison.OrdinalIgnoreCase) ||
+		                   geoJsonContent.Contains("Moskovskaya", StringComparison.OrdinalIgnoreCase);
+		
+		if (containsMoscow)
+		{
+			_logger?.LogInformation("GeoJSON contains Moscow-related regions. Searching for exact matches...");
+			
+			// Find all occurrences and log context
+			var moscowMatches = new List<string>();
+			var lines = geoJsonContent.Split('\n');
+			for (int i = 0; i < lines.Length; i++)
+			{
+				var line = lines[i];
+				if (line.Contains("Moscow", StringComparison.OrdinalIgnoreCase) ||
+				    line.Contains("Московская", StringComparison.OrdinalIgnoreCase) ||
+				    line.Contains("Moskovskaya", StringComparison.OrdinalIgnoreCase))
+				{
+					// Get context (previous and next lines if available)
+					var contextStart = Math.Max(0, i - 2);
+					var contextEnd = Math.Min(lines.Length - 1, i + 2);
+					var context = string.Join("\n", lines.Skip(contextStart).Take(contextEnd - contextStart + 1));
+					moscowMatches.Add($"Line {i + 1}: {context}");
+					
+					if (moscowMatches.Count <= 5) // Log first 5 matches
+					{
+						_logger?.LogInformation("Moscow match found at line {Line}: {Context}", i + 1, context);
+					}
+				}
+			}
+			
+			_logger?.LogInformation("Total Moscow-related matches found in GeoJSON: {Count}", moscowMatches.Count);
+		}
+		else
+		{
+			_logger?.LogWarning("GeoJSON does NOT contain Moscow-related regions (checked for 'Moscow', 'Московская', 'Moskovskaya')");
+		}
+
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
 
@@ -479,8 +519,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
 					countryIsoAlpha2Code = isoValue.ToUpperInvariant();
 			}
-			// Try iso_a2 (lowercase - after ogr2ogr conversion)
-			else if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+			// Try iso_a2 (lowercase - after ogr2ogr conversion) - this is the field used in Natural Earth
+			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && 
+			    properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA2.GetString();
 				if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
@@ -583,21 +624,37 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Get region name - prioritize local name (original), use English as fallback
 			// Will be transliterated to Latin in post-processing if needed
+			// Natural Earth has: name_local (local name), name (transliterated), name_en (English), etc.
+			// Note: Names are NOT unique within a country - uniqueness is determined by identifier
 			var nameLatin = "Unknown";
-			if (properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			
+			// First try name_local (local name in original language) - this is what we want
+			if (properties.TryGetProperty("name_local", out var nameLocal) && nameLocal.ValueKind == JsonValueKind.String)
 			{
-				var value = name.GetString();
+				var value = nameLocal.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLatin = value; // Use local name (original), will be transliterated later if needed
 			}
-			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
-			         nameUpper.ValueKind == JsonValueKind.String)
+			// Then try name (transliterated name)
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			{
+				var value = name.GetString();
+				if (!string.IsNullOrWhiteSpace(value))
+					nameLatin = value; // Use transliterated name, will be transliterated later if needed
+			}
+			// Try NAME (uppercase)
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("NAME", out var nameUpper) &&
+			    nameUpper.ValueKind == JsonValueKind.String)
 			{
 				var value = nameUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLatin = value; // Use local name (original), will be transliterated later if needed
 			}
-			else if (properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
+			// Fallback to name_en (English name)
+			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
+			    properties.TryGetProperty("name_en", out var nameEn) && nameEn.ValueKind == JsonValueKind.String)
 			{
 				var value = nameEn.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
@@ -619,19 +676,49 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				continue;
 			}
 
-			// Generate identifier - prefer postal code, then use name + country code
-			// Natural Earth Admin 1 may have postal codes or use other identifiers
-			string identifier;
+			// Generate identifier - prefer ISO 3166-2 code (most unique), then postal code, then use name + country code
+			// Natural Earth Admin 1 has iso_3166_2 (e.g., "RU-MOW", "RU-MOS") which is unique per region
+			string identifier = "";
 
-			// Try POSTAL (uppercase) first
-			if (properties.TryGetProperty("POSTAL", out var postalUpper) &&
-			    postalUpper.ValueKind == JsonValueKind.String)
+			// Try ISO_3166_2 first (uppercase) - this is the most unique identifier
+			if (properties.TryGetProperty("ISO_3166_2", out var iso3166_2Upper) &&
+			    iso3166_2Upper.ValueKind == JsonValueKind.String)
+			{
+				var iso3166Value = iso3166_2Upper.GetString();
+				if (!string.IsNullOrWhiteSpace(iso3166Value) && iso3166Value != "-99")
+					identifier = iso3166Value.ToUpperInvariant();
+			}
+			// Try iso_3166_2 (lowercase - after ogr2ogr conversion)
+			else if (properties.TryGetProperty("iso_3166_2", out var iso3166_2) &&
+			         iso3166_2.ValueKind == JsonValueKind.String)
+			{
+				var iso3166Value = iso3166_2.GetString();
+				if (!string.IsNullOrWhiteSpace(iso3166Value) && iso3166Value != "-99")
+					identifier = iso3166Value.ToUpperInvariant();
+			}
+			// Try ADM1_CODE (uppercase) - unique administrative code
+			else if (properties.TryGetProperty("ADM1_CODE", out var adm1CodeUpper) &&
+			         adm1CodeUpper.ValueKind == JsonValueKind.String)
+			{
+				var adm1CodeValue = adm1CodeUpper.GetString();
+				if (!string.IsNullOrWhiteSpace(adm1CodeValue) && adm1CodeValue != "-99")
+					identifier = adm1CodeValue.ToUpperInvariant();
+			}
+			// Try adm1_code (lowercase)
+			else if (properties.TryGetProperty("adm1_code", out var adm1Code) &&
+			         adm1Code.ValueKind == JsonValueKind.String)
+			{
+				var adm1CodeValue = adm1Code.GetString();
+				if (!string.IsNullOrWhiteSpace(adm1CodeValue) && adm1CodeValue != "-99")
+					identifier = adm1CodeValue.ToUpperInvariant();
+			}
+			// Try POSTAL (uppercase) as fallback
+			else if (properties.TryGetProperty("POSTAL", out var postalUpper) &&
+			         postalUpper.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postalUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
 					identifier = postalValue.ToUpperInvariant();
-				else
-					identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
 			}
 			// Try postal (lowercase - after ogr2ogr conversion)
 			else if (properties.TryGetProperty("postal", out var postal) && postal.ValueKind == JsonValueKind.String)
@@ -639,8 +726,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				var postalValue = postal.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
 					identifier = postalValue.ToUpperInvariant();
-				else
-					identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
 			}
 			// Try POSTAL_CODE (uppercase)
 			else if (properties.TryGetProperty("POSTAL_CODE", out var postalCodeUpper) &&
@@ -649,8 +734,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				var postalValue = postalCodeUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
 					identifier = postalValue.ToUpperInvariant();
-				else
-					identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
 			}
 			// Try postal_code (lowercase)
 			else if (properties.TryGetProperty("postal_code", out var postalCode) &&
@@ -659,12 +742,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				var postalValue = postalCode.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
 					identifier = postalValue.ToUpperInvariant();
-				else
-					identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
 			}
 			else
 			{
-				// Use combination of name and country code as identifier
+				// Use combination of name and country code as last resort
 				identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
 			}
 
