@@ -408,27 +408,32 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) &&
 			    !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
                         country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
                         name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
                         geometry = EXCLUDED.geometry;";
 			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        geometry = EXCLUDED.geometry;";
 			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, NULL, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        geometry = EXCLUDED.geometry;";
 			else
 				throw new InvalidOperationException(
 					$"Region '{region.NameLatin}' must have at least one country ISO code (alpha-2 or alpha-3)");
@@ -440,6 +445,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", region.Identifier);
 			cmd.Parameters.AddWithValue("name", region.NameLatin);
+			cmd.Parameters.AddWithValue("nameLocal", region.NameLocal ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
@@ -631,13 +637,17 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			// Natural Earth has: name_local (local name), name (transliterated), name_en (English), etc.
 			// Note: Names are NOT unique within a country - uniqueness is determined by identifier
 			var nameLatin = "Unknown";
+			string? nameLocal = null;
 			
 			// First try name_local (local name in original language) - this is what we want
-			if (properties.TryGetProperty("name_local", out var nameLocal) && nameLocal.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty("name_local", out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
 			{
-				var value = nameLocal.GetString();
+				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
+				{
 					nameLatin = value; // Use local name (original), will be transliterated later if needed
+					nameLocal = value; // Store for name_local field
+				}
 			}
 			// Then try name (transliterated name)
 			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
@@ -770,12 +780,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				// Both codes available
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
                         country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
                         name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
                         geometry = EXCLUDED.geometry;";
 			}
 			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
@@ -785,23 +796,26 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				{
 					// We have both codes now (alpha-3 was looked up)
 					insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
                         country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
                         name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
                         geometry = EXCLUDED.geometry;";
 				}
 				else
 				{
 					// Still only alpha-2 (lookup failed or not found)
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, regions.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        geometry = EXCLUDED.geometry;";
 				}
 			}
 			else
@@ -813,17 +827,20 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 						"Inserting region with only alpha-3 code: identifier={Identifier}, alpha3={Alpha3}", identifier,
 						countryIsoAlpha3Code);
 				insertQuery = @"
-                    INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
-                    VALUES (@identifier, @name, NULL, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO regions (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
+                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, regions.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        geometry = EXCLUDED.geometry;";
 			}
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
+			cmd.Parameters.AddWithValue("nameLocal", nameLocal ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
@@ -920,26 +937,32 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code) &&
 			    !string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
                         country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 			else if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code))
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 			else if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromWKB(@geometry, 4326))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 			else
 				throw new InvalidOperationException(
 					$"City '{city.NameLatin}' must have at least one country ISO code (alpha-2 or alpha-3)");
@@ -951,6 +974,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", city.Identifier);
 			cmd.Parameters.AddWithValue("name", city.NameLatin);
+			cmd.Parameters.AddWithValue("nameLocal", city.NameLocal ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", city.CountryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
@@ -1177,11 +1201,15 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			// OSM/Geofabrik shapefile fields: name (original, local), nameascii (ASCII transliteration), name_en (English)
 			// Will be transliterated to Latin in post-processing if needed
 			var nameLatin = "Unknown";
+			string? nameLocal = null;
 			if (properties.TryGetProperty("name", out var originalName) && originalName.ValueKind == JsonValueKind.String)
 			{
 				var value = originalName.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
+				{
 					nameLatin = value; // Use local name (original), will be transliterated later if needed
+					nameLocal = value; // Store for name_local field (no transliteration)
+				}
 			}
 			else if (properties.TryGetProperty("NAME", out var nameUpper) &&
 			         nameUpper.ValueKind == JsonValueKind.String)
@@ -1460,33 +1488,40 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && !string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
 				// Both codes available
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
                         country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 			else if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				// Only alpha-2
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, @countryAlpha2Code, NULL, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha2_code = COALESCE(EXCLUDED.country_iso_alpha2_code, cities.country_iso_alpha2_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 			else
 				// Only alpha-3
 				insertQuery = @"
-                    INSERT INTO cities (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
-                    VALUES (@identifier, @name, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
+                    INSERT INTO cities (identifier, name_latin, name_local, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, geometry)
+                    VALUES (@identifier, @name, @nameLocal, NULL, @countryAlpha3Code, @regionIdentifier, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier) DO UPDATE
                     SET country_iso_alpha3_code = COALESCE(EXCLUDED.country_iso_alpha3_code, cities.country_iso_alpha3_code),
-                        name_latin = EXCLUDED.name_latin, region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
+                        name_latin = EXCLUDED.name_latin, 
+                        name_local = EXCLUDED.name_local,
+                        region_identifier = EXCLUDED.region_identifier, geometry = EXCLUDED.geometry;";
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
+			cmd.Parameters.AddWithValue("nameLocal", nameLocal ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
