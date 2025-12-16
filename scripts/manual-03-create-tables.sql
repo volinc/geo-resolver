@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS countries (
 
 -- Create indexes for countries
 CREATE INDEX IF NOT EXISTS idx_countries_geometry ON countries USING GIST (geometry);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_countries_iso_alpha2 ON countries (iso_alpha2_code);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_countries_iso_alpha3 ON countries (iso_alpha3_code);
+CREATE INDEX IF NOT EXISTS idx_countries_name_latin ON countries (name_latin text_pattern_ops);
 
 -- Create regions table
 CREATE TABLE IF NOT EXISTS regions (
@@ -44,15 +47,12 @@ CREATE TABLE IF NOT EXISTS regions (
     CONSTRAINT regions_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
 );
 
--- Create unique indexes for regions (without WHERE clause)
--- PostgreSQL treats NULL as distinct, so records with NULL won't conflict
-CREATE UNIQUE INDEX IF NOT EXISTS regions_unique_alpha2 ON regions (identifier, country_iso_alpha2_code);
-CREATE UNIQUE INDEX IF NOT EXISTS regions_unique_alpha3 ON regions (identifier, country_iso_alpha3_code);
-
 -- Create indexes for regions
+CREATE UNIQUE INDEX IF NOT EXISTS idx_regions_identifier ON regions (identifier);
 CREATE INDEX IF NOT EXISTS idx_regions_geometry ON regions USING GIST (geometry);
 CREATE INDEX IF NOT EXISTS idx_regions_country_alpha2 ON regions (country_iso_alpha2_code);
 CREATE INDEX IF NOT EXISTS idx_regions_country_alpha3 ON regions (country_iso_alpha3_code);
+CREATE INDEX IF NOT EXISTS idx_regions_name_latin ON regions (name_latin text_pattern_ops);
 
 -- Create cities table
 CREATE TABLE IF NOT EXISTS cities (
@@ -65,15 +65,16 @@ CREATE TABLE IF NOT EXISTS cities (
     wikidataid VARCHAR(20) COLLATE "C",
     name_local TEXT,
     geometry GEOMETRY(MULTIPOLYGON, 4326) NOT NULL,
-    CONSTRAINT cities_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL),
-    CONSTRAINT cities_unique UNIQUE(identifier, country_iso_alpha2_code, country_iso_alpha3_code)
+    CONSTRAINT cities_country_code_check CHECK (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
 );
 
 -- Create indexes for cities
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cities_identifier ON cities (identifier);
 CREATE INDEX IF NOT EXISTS idx_cities_geometry ON cities USING GIST (geometry);
 CREATE INDEX IF NOT EXISTS idx_cities_country_alpha2 ON cities (country_iso_alpha2_code);
 CREATE INDEX IF NOT EXISTS idx_cities_country_alpha3 ON cities (country_iso_alpha3_code);
 CREATE INDEX IF NOT EXISTS idx_cities_region ON cities (region_identifier);
+CREATE INDEX IF NOT EXISTS idx_cities_name_latin ON cities (name_latin text_pattern_ops);
 
 -- Create timezones table
 CREATE TABLE IF NOT EXISTS timezones (
