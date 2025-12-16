@@ -58,12 +58,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
 
-		await using var cmd = new NpgsqlCommand(
-			@"INSERT INTO last_update (id, updated_at) 
-              VALUES (1, @updateTime)
-              ON CONFLICT (id) 
-              DO UPDATE SET updated_at = @updateTime;",
-			connection);
+		await using var cmd = new NpgsqlCommand(SqlQueries.UpsertLastUpdate, connection);
 
 		cmd.Parameters.AddWithValue("@updateTime", updateTime.UtcDateTime);
 		await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -74,16 +69,16 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		await using var connection = _npgsqlDataSource.CreateConnection();
 		await connection.OpenAsync(cancellationToken);
 
-		await using var cmd1 = new NpgsqlCommand("TRUNCATE TABLE countries CASCADE;", connection);
+		await using var cmd1 = new NpgsqlCommand(SqlQueries.TruncateCountries, connection);
 		await cmd1.ExecuteNonQueryAsync(cancellationToken);
 
-		await using var cmd2 = new NpgsqlCommand("TRUNCATE TABLE regions CASCADE;", connection);
+		await using var cmd2 = new NpgsqlCommand(SqlQueries.TruncateRegions, connection);
 		await cmd2.ExecuteNonQueryAsync(cancellationToken);
 
-		await using var cmd3 = new NpgsqlCommand("TRUNCATE TABLE cities CASCADE;", connection);
+		await using var cmd3 = new NpgsqlCommand(SqlQueries.TruncateCities, connection);
 		await cmd3.ExecuteNonQueryAsync(cancellationToken);
 
-		await using var cmd4 = new NpgsqlCommand("TRUNCATE TABLE timezones CASCADE;", connection);
+		await using var cmd4 = new NpgsqlCommand(SqlQueries.TruncateTimezones, connection);
 		await cmd4.ExecuteNonQueryAsync(cancellationToken);
 	}
 
@@ -106,14 +101,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				throw new InvalidOperationException(
 					$"Country '{country.NameLatin}' must have a wikidataid");
 
-			var insertQuery = @"
-                    INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                    VALUES (@isoAlpha2Code, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromWKB(@geometry, 4326))
-                ON CONFLICT (iso_alpha2_code) DO UPDATE
-                    SET iso_alpha3_code = EXCLUDED.iso_alpha3_code,
-                        name_latin = EXCLUDED.name_latin, 
-                        wikidataid = EXCLUDED.wikidataid,
-                        geometry = EXCLUDED.geometry;";
+			var insertQuery = SqlQueries.InsertCountryFromModel;
 
 			await using var cmd = new NpgsqlCommand(insertQuery, connection, transaction);
 
@@ -160,7 +148,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string? isoAlpha3Code = null;
 
 			// Try ISO_A2 (Natural Earth format) - alpha-2 code
-			if (properties.TryGetProperty("ISO_A2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2, out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA2.GetString();
 				// Natural Earth uses "-99" for missing values
@@ -168,7 +156,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					isoAlpha2Code = isoValue.ToUpperInvariant();
 			}
 			// Try ISO (some sources use just ISO)
-			else if (properties.TryGetProperty("ISO", out var iso) && iso.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Iso, out var iso) && iso.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = iso.GetString();
 				if (!string.IsNullOrWhiteSpace(isoValue))
@@ -180,7 +168,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 			}
 			// Try iso_a2 (lowercase)
-			else if (properties.TryGetProperty("iso_a2", out var isoA2Lower) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2Lower, out var isoA2Lower) &&
 			         isoA2Lower.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA2Lower.GetString();
@@ -188,7 +176,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					isoAlpha2Code = isoValue.ToUpperInvariant();
 			}
 			// Try iso_a2_eh
-			else if (properties.TryGetProperty("iso_a2_eh", out var isoA2Eh) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2EhLower, out var isoA2Eh) &&
 			         isoA2Eh.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA2Eh.GetString();
@@ -196,7 +184,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					isoAlpha2Code = isoValue.ToUpperInvariant();
 			}
 			// Try ISO_A2_EH (uppercase variant)
-			else if (properties.TryGetProperty("ISO_A2_EH", out var isoA2EhUpper) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2Eh, out var isoA2EhUpper) &&
 			         isoA2EhUpper.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA2EhUpper.GetString();
@@ -205,14 +193,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 
 			// Try ISO_A3 (Natural Earth format) - alpha-3 code
-			if (properties.TryGetProperty("ISO_A3", out var isoA3) && isoA3.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty(GeoJsonFieldNames.IsoA3, out var isoA3) && isoA3.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA3.GetString();
 				if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 3)
 					isoAlpha3Code = isoValue.ToUpperInvariant();
 			}
 			// Try iso_a3 (lowercase)
-			else if (properties.TryGetProperty("iso_a3", out var isoA3Lower) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.IsoA3Lower, out var isoA3Lower) &&
 			         isoA3Lower.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = isoA3Lower.GetString();
@@ -220,14 +208,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					isoAlpha3Code = isoValue.ToUpperInvariant();
 			}
 			// Try ADM0_A3 (some sources use this for country alpha-3)
-			else if (properties.TryGetProperty("ADM0_A3", out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Adm0A3, out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = adm0A3.GetString();
 				if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 3)
 					isoAlpha3Code = isoValue.ToUpperInvariant();
 			}
 			// Try adm0_a3 (lowercase)
-			else if (properties.TryGetProperty("adm0_a3", out var adm0A3Lower) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Adm0A3Lower, out var adm0A3Lower) &&
 			         adm0A3Lower.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = adm0A3Lower.GetString();
@@ -253,17 +241,16 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			var nameLatin = "Unknown";
 			if (properties.TryGetProperty("NAME", out var name) && name.ValueKind == JsonValueKind.String)
 				nameLatin = name.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("NAME_LONG", out var nameLong) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.NameLong, out var nameLong) &&
 			         nameLong.ValueKind == JsonValueKind.String)
 				nameLatin = nameLong.GetString() ?? "Unknown";
-			else if (properties.TryGetProperty("name", out var nameLower) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Name, out var nameLower) &&
 			         nameLower.ValueKind == JsonValueKind.String)
 				nameLatin = nameLower.GetString() ?? "Unknown";
 
 			// Extract and validate Wikidata ID
 			string? wikidataId = null;
-			var wikidataFields = new[] { "wikidata", "WIKIDATA", "wikidataid", "WIKIDATAID", "wikidata_id", "WIKIDATA_ID" };
-			foreach (var fieldName in wikidataFields)
+			foreach (var fieldName in GeoJsonFieldNames.WikidataFieldNames)
 			{
 				if (properties.TryGetProperty(fieldName, out var wikidataProp))
 				{
@@ -313,14 +300,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			try
 			{
 				// Both codes and wikidataid are available
-				await using var cmd = new NpgsqlCommand(@"
-                        INSERT INTO countries (iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry)
-                        VALUES (@isoAlpha2Code, @isoAlpha3Code, @name, @wikidataid, ST_GeomFromGeoJSON(@geometryJson))
-                        ON CONFLICT (iso_alpha2_code) DO UPDATE
-                        SET iso_alpha3_code = EXCLUDED.iso_alpha3_code,
-                            name_latin = EXCLUDED.name_latin, 
-                            wikidataid = EXCLUDED.wikidataid,
-                            geometry = EXCLUDED.geometry;", connection, transaction);
+				await using var cmd = new NpgsqlCommand(SqlQueries.InsertCountryFromGeoJson, connection, transaction);
 
 				cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
 				cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code);
@@ -340,11 +320,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				// Update existing record by alpha-3
 				if (!string.IsNullOrWhiteSpace(isoAlpha3Code))
 				{
-					await using var updateCmd = new NpgsqlCommand(@"
-                        UPDATE countries
-                        SET iso_alpha2_code = COALESCE(@isoAlpha2Code, countries.iso_alpha2_code),
-                            name_latin = @name, geometry = ST_GeomFromGeoJSON(@geometryJson)
-                        WHERE iso_alpha3_code = @isoAlpha3Code;", connection, transaction);
+					await using var updateCmd = new NpgsqlCommand(SqlQueries.UpdateCountryByAlpha3OnConflict, connection, transaction);
 
 					if (!string.IsNullOrWhiteSpace(isoAlpha2Code))
 						updateCmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
@@ -396,9 +372,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				try
 				{
-					await using var lookupCmd = new NpgsqlCommand(
-						"SELECT iso_alpha3_code FROM countries WHERE iso_alpha2_code = @alpha2Code LIMIT 1;",
-						connection, transaction);
+					await using var lookupCmd = new NpgsqlCommand(SqlQueries.LookupCountryAlpha3ByAlpha2, connection, transaction);
 					lookupCmd.Parameters.AddWithValue("alpha2Code", countryIsoAlpha2Code);
 					var alpha3Result = await lookupCmd.ExecuteScalarAsync(cancellationToken);
 					if (alpha3Result != null && alpha3Result != DBNull.Value)
@@ -610,14 +584,15 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				// Log first few skipped regions for debugging
 				if (skipped <= 10)
 				{
-					var regionName = properties.TryGetProperty("name", out var nameProp) &&
-				                 nameProp.ValueKind == JsonValueKind.String
-					? nameProp.GetString()
-					: properties.TryGetProperty("name_local", out var nameLocalPropForLog) &&
-					  nameLocalPropForLog.ValueKind == JsonValueKind.String
-						? nameLocalPropForLog.GetString()
-						: "Unknown";
-					_logger?.LogWarning("Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
+					var regionName = properties.TryGetProperty(GeoJsonFieldNames.Name, out var nameProp) &&
+					                 nameProp.ValueKind == JsonValueKind.String
+						? nameProp.GetString()
+						: properties.TryGetProperty(GeoJsonFieldNames.NameLocal, out var nameLocalPropForLog) &&
+						  nameLocalPropForLog.ValueKind == JsonValueKind.String
+							? nameLocalPropForLog.GetString()
+							: "Unknown";
+					_logger?.LogWarning(
+						"Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
 						regionName, properties.GetRawText());
 				}
 
@@ -653,9 +628,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				try
 				{
-					await using var lookupCmd = new NpgsqlCommand(
-						"SELECT iso_alpha3_code FROM countries WHERE iso_alpha2_code = @alpha2Code LIMIT 1;",
-						connection, transaction);
+					await using var lookupCmd = new NpgsqlCommand(SqlQueries.LookupCountryAlpha3ByAlpha2, connection, transaction);
 					lookupCmd.Parameters.AddWithValue("alpha2Code", countryIsoAlpha2Code);
 					var alpha3Result = await lookupCmd.ExecuteScalarAsync(cancellationToken);
 					if (alpha3Result != null && alpha3Result != DBNull.Value)
@@ -689,14 +662,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string? nameLocal = null;
 			
 			// First try name_local (local name in original language)
-			if (properties.TryGetProperty("name_local", out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty(GeoJsonFieldNames.NameLocal, out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
 			{
 				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLocal = value.Trim();
 			}
 			// Then try name
-			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			if (nameLocal == null && properties.TryGetProperty(GeoJsonFieldNames.Name, out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
@@ -717,8 +690,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Extract and validate Wikidata ID
 			string? wikidataId = null;
-			var wikidataFields = new[] { "wikidata", "WIKIDATA", "wikidataid", "WIKIDATAID", "wikidata_id", "WIKIDATA_ID" };
-			foreach (var fieldName in wikidataFields)
+			foreach (var fieldName in GeoJsonFieldNames.WikidataFieldNames)
 			{
 				if (properties.TryGetProperty(fieldName, out var wikidataProp))
 				{
@@ -733,7 +705,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string identifier = "";
 
 			// Try ISO_3166_2 first (uppercase) - this is the most unique identifier
-			if (properties.TryGetProperty("ISO_3166_2", out var iso31662Upper) &&
+			if (properties.TryGetProperty(GeoJsonFieldNames.Iso31662, out var iso31662Upper) &&
 			    iso31662Upper.ValueKind == JsonValueKind.String)
 			{
 				var iso3166Value = iso31662Upper.GetString();
@@ -741,7 +713,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = iso3166Value.ToUpperInvariant();
 			}
 			// Try iso_3166_2 (lowercase - after ogr2ogr conversion)
-			else if (properties.TryGetProperty("iso_3166_2", out var iso31662) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Iso31662Lower, out var iso31662) &&
 			         iso31662.ValueKind == JsonValueKind.String)
 			{
 				var iso3166Value = iso31662.GetString();
@@ -749,7 +721,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = iso3166Value.ToUpperInvariant();
 			}
 			// Try ADM1_CODE (uppercase) - unique administrative code
-			else if (properties.TryGetProperty("ADM1_CODE", out var adm1CodeUpper) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Adm1Code, out var adm1CodeUpper) &&
 			         adm1CodeUpper.ValueKind == JsonValueKind.String)
 			{
 				var adm1CodeValue = adm1CodeUpper.GetString();
@@ -757,7 +729,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = adm1CodeValue.ToUpperInvariant();
 			}
 			// Try adm1_code (lowercase)
-			else if (properties.TryGetProperty("adm1_code", out var adm1Code) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Adm1CodeLower, out var adm1Code) &&
 			         adm1Code.ValueKind == JsonValueKind.String)
 			{
 				var adm1CodeValue = adm1Code.GetString();
@@ -765,7 +737,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = adm1CodeValue.ToUpperInvariant();
 			}
 			// Try POSTAL (uppercase) as fallback
-			else if (properties.TryGetProperty("POSTAL", out var postalUpper) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Postal, out var postalUpper) &&
 			    postalUpper.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postalUpper.GetString();
@@ -773,14 +745,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = postalValue.ToUpperInvariant();
 			}
 			// Try postal (lowercase - after ogr2ogr conversion)
-			else if (properties.TryGetProperty("postal", out var postal) && postal.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty(GeoJsonFieldNames.PostalLower, out var postal) && postal.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postal.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
 					identifier = postalValue.ToUpperInvariant();
 			}
 			// Try POSTAL_CODE (uppercase)
-			else if (properties.TryGetProperty("POSTAL_CODE", out var postalCodeUpper) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.PostalCode, out var postalCodeUpper) &&
 			         postalCodeUpper.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postalCodeUpper.GetString();
@@ -788,7 +760,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					identifier = postalValue.ToUpperInvariant();
 			}
 			// Try postal_code (lowercase)
-			else if (properties.TryGetProperty("postal_code", out var postalCode) &&
+			else if (properties.TryGetProperty(GeoJsonFieldNames.PostalCodeLower, out var postalCode) &&
 			         postalCode.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postalCode.GetString();
@@ -1013,7 +985,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string? countryIsoAlpha3Code = null;
 
 			// Try OSM format first: ISO3166-1:alpha2
-			if (properties.TryGetProperty("ISO3166-1:alpha2", out var osmIsoA2) &&
+			if (properties.TryGetProperty(GeoJsonFieldNames.OsmIso3166Alpha2, out var osmIsoA2) &&
 			    osmIsoA2.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = osmIsoA2.GetString();
@@ -1022,7 +994,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 
 			// Try OSM format: ISO3166-1:alpha3
-			if (properties.TryGetProperty("ISO3166-1:alpha3", out var osmIsoA3) &&
+			if (properties.TryGetProperty(GeoJsonFieldNames.OsmIso3166Alpha3, out var osmIsoA3) &&
 			    osmIsoA3.ValueKind == JsonValueKind.String)
 			{
 				var isoValue = osmIsoA3.GetString();
@@ -1032,7 +1004,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try OSM format: ISO3166-1 (can be either alpha-2 or alpha-3)
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				if (properties.TryGetProperty("ISO3166-1", out var osmIso) && osmIso.ValueKind == JsonValueKind.String)
+				if (properties.TryGetProperty(GeoJsonFieldNames.OsmIso3166, out var osmIso) && osmIso.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = osmIso.GetString();
 					if (!string.IsNullOrWhiteSpace(isoValue))
@@ -1046,7 +1018,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try OSM format: addr:country (usually alpha-2)
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				if (properties.TryGetProperty("addr:country", out var addrCountry) &&
+				if (properties.TryGetProperty(GeoJsonFieldNames.OsmAddrCountry, out var addrCountry) &&
 				    addrCountry.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = addrCountry.GetString();
@@ -1056,7 +1028,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try Natural Earth format: ISO_A2 (uppercase)
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				if (properties.TryGetProperty("ISO_A2", out var isoA2Upper) &&
+				if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2, out var isoA2Upper) &&
 				    isoA2Upper.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = isoA2Upper.GetString();
@@ -1066,7 +1038,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try iso_a2 (lowercase - after ogr2ogr conversion)
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
-				if (properties.TryGetProperty("iso_a2", out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
+				if (properties.TryGetProperty(GeoJsonFieldNames.IsoA2Lower, out var isoA2) && isoA2.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = isoA2.GetString();
 					if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99" && isoValue.Length == 2)
@@ -1075,7 +1047,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try ADM0_ISO (uppercase) - usually alpha-2, but could be alpha-3
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				if (properties.TryGetProperty("ADM0_ISO", out var adm0IsoUpper) &&
+				if (properties.TryGetProperty(GeoJsonFieldNames.Adm0Iso, out var adm0IsoUpper) &&
 				    adm0IsoUpper.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = adm0IsoUpper.GetString();
@@ -1090,7 +1062,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Try adm0_iso (lowercase - after ogr2ogr conversion)
 			if (string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
-				if (properties.TryGetProperty("adm0_iso", out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
+				if (properties.TryGetProperty(GeoJsonFieldNames.Adm0IsoLower, out var adm0Iso) && adm0Iso.ValueKind == JsonValueKind.String)
 				{
 					var isoValue = adm0Iso.GetString();
 					if (!string.IsNullOrWhiteSpace(isoValue) && isoValue != "-99")
@@ -1103,7 +1075,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				}
 
 			// Try ADM0_A3 (uppercase) - alpha-3 code
-			if (properties.TryGetProperty("ADM0_A3", out var adm0A3Upper) &&
+			if (properties.TryGetProperty(GeoJsonFieldNames.Adm0A3, out var adm0A3Upper) &&
 			    adm0A3Upper.ValueKind == JsonValueKind.String)
 			{
 				var alpha3Value = adm0A3Upper.GetString();
@@ -1111,7 +1083,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					countryIsoAlpha3Code = alpha3Value.ToUpperInvariant();
 			}
 			// Try adm0_a3 (lowercase - after ogr2ogr conversion)
-			else if (properties.TryGetProperty("adm0_a3", out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty(GeoJsonFieldNames.Adm0A3Lower, out var adm0A3) && adm0A3.ValueKind == JsonValueKind.String)
 			{
 				var alpha3Value = adm0A3.GetString();
 				if (!string.IsNullOrWhiteSpace(alpha3Value) && alpha3Value != "-99" && alpha3Value.Length == 3)
@@ -1152,10 +1124,10 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				// Log first few skipped cities for debugging
 				if (skipped <= 10)
 				{
-					var cityName = properties.TryGetProperty("name", out var nameProp) &&
+						var cityName = properties.TryGetProperty(GeoJsonFieldNames.Name, out var nameProp) &&
 					               nameProp.ValueKind == JsonValueKind.String
 						? nameProp.GetString()
-						: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
+							: properties.TryGetProperty(GeoJsonFieldNames.NameAscii, out var nameAsciiProp) &&
 						  nameAsciiProp.ValueKind == JsonValueKind.String
 							? nameAsciiProp.GetString()
 							: "Unknown";
@@ -1172,14 +1144,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string? nameLocal = null;
 			
 			// First try name_local (local name in original language)
-			if (properties.TryGetProperty("name_local", out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty(GeoJsonFieldNames.NameLocal, out var nameLocalProp) && nameLocalProp.ValueKind == JsonValueKind.String)
 			{
 				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
 					nameLocal = value.Trim();
 			}
 			// Then try name
-			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+			if (nameLocal == null && properties.TryGetProperty(GeoJsonFieldNames.Name, out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
@@ -1275,9 +1247,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			// Generate city identifier - use OSM ID if available, otherwise use empty string
 			string identifier = "";
-
+			
 			// Try to get OSM ID as identifier
-			if (properties.TryGetProperty("osm_id", out var osmIdProp))
+			if (properties.TryGetProperty(GeoJsonFieldNames.OsmId, out var osmIdProp))
 			{
 				string? osmIdValue = null;
 				if (osmIdProp.ValueKind == JsonValueKind.String)
@@ -1374,11 +1346,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		foreach (var timezone in timezones)
 		{
-			await using var cmd = new NpgsqlCommand(@"
-                INSERT INTO timezones (timezone_id, geometry)
-                VALUES (@timezoneId, ST_GeomFromWKB(@geometry, 4326))
-                ON CONFLICT (timezone_id) DO UPDATE
-                SET geometry = EXCLUDED.geometry;", connection, transaction);
+			await using var cmd = new NpgsqlCommand(SqlQueries.InsertTimezoneFromModel, connection, transaction);
 
 			var wkbWriter = new WKBWriter();
 			var wkb = wkbWriter.Write(timezone.Geometry);
@@ -1436,11 +1404,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			try
 			{
-				await using var cmd = new NpgsqlCommand(@"
-                    INSERT INTO timezones (timezone_id, geometry)
-                    VALUES (@timezoneId, ST_GeomFromGeoJSON(@geometryJson))
-                    ON CONFLICT (timezone_id) DO UPDATE
-                    SET geometry = EXCLUDED.geometry;", connection, transaction);
+				await using var cmd = new NpgsqlCommand(SqlQueries.InsertTimezoneFromGeoJson, connection, transaction);
 
 				cmd.Parameters.AddWithValue("timezoneId", timezoneId);
 				cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
@@ -1483,11 +1447,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		await connection.OpenAsync(cancellationToken);
 
 		var point = $"POINT({longitude} {latitude})";
-		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry
-            FROM countries
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+		await using var cmd = new NpgsqlCommand(SqlQueries.FindCountryByPoint, connection);
 
 		cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
 
@@ -1513,11 +1473,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		await connection.OpenAsync(cancellationToken);
 
 		var point = $"POINT({longitude} {latitude})";
-		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, name_local, geometry
-            FROM regions
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+		await using var cmd = new NpgsqlCommand(SqlQueries.FindRegionByPoint, connection);
 
 		cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
 
@@ -1546,11 +1502,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		var point = $"POINT({longitude} {latitude})";
 		// Cities use MULTIPOLYGON geometries (city boundaries), so we use ST_Contains to check if point is within the boundary
-		await using var cmd = new NpgsqlCommand(@"
-            SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, name_local, geometry
-            FROM cities
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+		await using var cmd = new NpgsqlCommand(SqlQueries.FindCityByPoint, connection);
 
 		cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
 
@@ -1578,11 +1530,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		await connection.OpenAsync(cancellationToken);
 
 		var point = $"POINT({longitude} {latitude})";
-		await using var cmd = new NpgsqlCommand(@"
-            SELECT timezone_id
-            FROM timezones
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+		await using var cmd = new NpgsqlCommand(SqlQueries.FindTimezoneByPoint, connection);
 
 		cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
 
