@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -137,14 +138,49 @@ public sealed class OsmCityShapefileLoader : IOsmCityShapefileLoader
 			}
 			else
 			{
-				// Для стран без единого shapefile (например, RU) обрабатываем региональные ZIP'ы параллельно
-				var tasks = urls.Select(url =>
-					DownloadAndProcessCityZipAsync(url, countryIsoAlpha2Code, httpClient, cancellationToken));
+				// Для стран без единого shapefile (например, RU):
+				// 1. Скачиваем все файлы параллельно
+				// 2. Обрабатываем их последовательно через очередь (чтобы избежать конфликтов при вставке в БД)
+				_logger.LogInformation(
+					"Downloading {Count} regional shapefiles for {CountryIso2} in parallel...",
+					urls.Length, countryIsoAlpha2Code);
 
-				var results = await Task.WhenAll(tasks);
-				if (!results.Any(r => r))
+				// Создаем канал для последовательной обработки
+				var channel = Channel.CreateUnbounded<(string Url, string? CacheFile)>();
+				var writer = channel.Writer;
+				var reader = channel.Reader;
+
+				// Запускаем последовательный обработчик
+				var processingTask = ProcessFilesSequentiallyAsync(reader, countryIsoAlpha2Code, cancellationToken);
+
+				// Скачиваем все файлы параллельно и сразу добавляем в очередь обработки
+				var downloadTasks = urls.Select(async url =>
+				{
+					try
+					{
+						var cacheFile = await DownloadCityZipAsync(url, countryIsoAlpha2Code, httpClient, cancellationToken);
+						await writer.WriteAsync((url, cacheFile), cancellationToken);
+						return cacheFile != null;
+					}
+					catch (Exception ex)
+					{
+						_logger.LogError(ex, "Failed to download file from {Url}", url);
+						await writer.WriteAsync((url, null), cancellationToken);
+						return false;
+					}
+				});
+
+				var downloadResults = await Task.WhenAll(downloadTasks);
+				
+				// Закрываем канал для записи
+				writer.Complete();
+				
+				// Ждем завершения обработки
+				await processingTask;
+
+				if (!downloadResults.Any(r => r))
 					throw new InvalidOperationException(
-						$"Failed to download or process any Geofabrik regional shapefiles for {countryIsoAlpha2Code}");
+						$"Failed to download any Geofabrik regional shapefiles for {countryIsoAlpha2Code}");
 			}
 
 			overallStopwatch.Stop();
@@ -169,6 +205,205 @@ public sealed class OsmCityShapefileLoader : IOsmCityShapefileLoader
 		overallStopwatch.Stop();
 		throw new InvalidOperationException(
 			$"Failed to load OSM/Geofabrik cities for country {countryIsoAlpha2Code}", lastException);
+	}
+
+	/// <summary>
+	///     Последовательно обрабатывает файлы из канала.
+	/// </summary>
+	private async Task ProcessFilesSequentiallyAsync(
+		ChannelReader<(string Url, string? CacheFile)> reader,
+		string countryIsoAlpha2Code,
+		CancellationToken cancellationToken)
+	{
+		await foreach (var item in reader.ReadAllAsync(cancellationToken))
+		{
+			if (item.CacheFile != null)
+			{
+				try
+				{
+					await ProcessCityZipFileAsync(item.CacheFile, countryIsoAlpha2Code, cancellationToken);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError(ex, "Failed to process downloaded file {CacheFile} from {Url}",
+						item.CacheFile, item.Url);
+					// Продолжаем обработку остальных файлов
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	///     Скачивает ZIP файл и возвращает путь к кэш-файлу. Возвращает null в случае ошибки.
+	/// </summary>
+	private async Task<string?> DownloadCityZipAsync(string url, string countryIsoAlpha2Code,
+		HttpClient httpClient, CancellationToken cancellationToken)
+	{
+		try
+		{
+			// Get cache directory
+			var cacheDir = Path.Combine(Directory.GetCurrentDirectory(), "cache", "geofabrik");
+			Directory.CreateDirectory(cacheDir);
+
+			// Generate cache file name from URL
+			var urlHash = ComputeSha256Hash(url);
+			var cacheFile = Path.Combine(cacheDir, $"{urlHash}.zip");
+			var cacheMetaFile = Path.Combine(cacheDir, $"{urlHash}.meta");
+
+			var downloadStopwatch = Stopwatch.StartNew();
+			var needsDownload = true;
+
+			// Check if cached file exists and is up-to-date
+			if (File.Exists(cacheFile) && File.Exists(cacheMetaFile))
+			{
+				// First verify the cached file is a valid ZIP
+				bool isValidZip = false;
+				try
+				{
+					await using (var verifyStream = new FileStream(cacheFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+					{
+						await using (var verifyArchive = new ZipArchive(verifyStream, ZipArchiveMode.Read, true))
+						{
+							_ = verifyArchive.Entries.Count;
+							isValidZip = true;
+						}
+					}
+					await Task.Yield();
+				}
+				catch (InvalidDataException)
+				{
+					_logger.LogWarning("Cached ZIP file for {Url} is corrupted, deleting cache", url);
+					try
+					{
+						if (File.Exists(cacheFile)) File.Delete(cacheFile);
+						if (File.Exists(cacheMetaFile)) File.Delete(cacheMetaFile);
+					}
+					catch
+					{
+						// Ignore cleanup errors
+					}
+				}
+
+				// Only proceed with ETag check if file is still valid and exists
+				if (isValidZip && File.Exists(cacheFile) && File.Exists(cacheMetaFile))
+				{
+					var cachedEtag = await File.ReadAllTextAsync(cacheMetaFile, cancellationToken);
+					if (!string.IsNullOrWhiteSpace(cachedEtag))
+					{
+						var etagValue = cachedEtag.Trim().Replace("\"", "").Trim();
+						if (!string.IsNullOrWhiteSpace(etagValue))
+						{
+							using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+
+							try
+							{
+								System.Net.Http.Headers.EntityTagHeaderValue? etagHeaderValue = null;
+								var etagWithQuotes = $"\"{etagValue}\"";
+
+								if (System.Net.Http.Headers.EntityTagHeaderValue.TryParse(etagWithQuotes, out var parsedEtag))
+								{
+									etagHeaderValue = parsedEtag;
+								}
+								else
+								{
+									_logger.LogWarning(
+										"Invalid ETag format '{ETag}' in cache for {Url}, deleting cache metadata",
+										etagValue, url);
+									try
+									{
+										if (File.Exists(cacheMetaFile)) File.Delete(cacheMetaFile);
+									}
+									catch
+									{
+										// Ignore cleanup errors
+									}
+									throw new FormatException($"Invalid ETag format: {etagValue}");
+								}
+
+								headRequest.Headers.IfNoneMatch.Add(etagHeaderValue);
+
+								var headResponse = await httpClient.SendAsync(headRequest, cancellationToken);
+								if (headResponse.StatusCode == System.Net.HttpStatusCode.NotModified)
+								{
+									_logger.LogInformation(
+										"Using cached shapefile for {CountryIso2} from {Url} (ETag: {ETag})",
+										countryIsoAlpha2Code, url, etagValue);
+									needsDownload = false;
+									downloadStopwatch.Stop();
+								}
+							}
+							catch (FormatException)
+							{
+								_logger.LogDebug("Skipping ETag check due to invalid format, will download");
+							}
+							catch (Exception ex)
+							{
+								_logger.LogWarning(ex, "Failed to check ETag for {Url}, will download", url);
+							}
+						}
+					}
+				}
+			}
+
+			// Download if needed
+			if (needsDownload)
+			{
+				var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+				if (!response.IsSuccessStatusCode)
+				{
+					_logger.LogError("Failed to download Geofabrik shapefile for {CountryIso2} from {Url}: {StatusCode}",
+						countryIsoAlpha2Code, url, response.StatusCode);
+					return null;
+				}
+
+				// Save ETag for future cache checks
+				var etag = response.Headers.ETag?.Tag;
+				if (!string.IsNullOrWhiteSpace(etag))
+				{
+					var etagValue = etag.Trim().Trim('"');
+					await File.WriteAllTextAsync(cacheMetaFile, etagValue, cancellationToken);
+				}
+
+				// Download to cache file
+				await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+				await using var fileStream = File.Create(cacheFile);
+				await responseStream.CopyToAsync(fileStream, cancellationToken);
+
+				downloadStopwatch.Stop();
+				_logger.LogInformation(
+					"Downloaded shapefile for {CountryIso2} from {Url} in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s) and cached to {CacheFile}",
+					countryIsoAlpha2Code, url, downloadStopwatch.ElapsedMilliseconds,
+					downloadStopwatch.Elapsed.TotalSeconds, cacheFile);
+
+				await fileStream.FlushAsync(cancellationToken);
+				fileStream.Close();
+				await Task.Yield();
+			}
+
+			return cacheFile;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Error downloading Geofabrik shapefile from {Url} for {CountryIso2}",
+				url, countryIsoAlpha2Code);
+			return null;
+		}
+	}
+
+	/// <summary>
+	///     Обрабатывает скачанный ZIP файл: распаковывает, конвертирует в GeoJSON и импортирует в БД.
+	/// </summary>
+	private async Task ProcessCityZipFileAsync(string cacheFile, string countryIsoAlpha2Code,
+		CancellationToken cancellationToken)
+	{
+		await using var zipStream = new FileStream(cacheFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+		
+		// Ensure stream is at the beginning
+		if (zipStream.CanSeek)
+			zipStream.Position = 0;
+
+		await ProcessCityShapefileZipAsync(zipStream, countryIsoAlpha2Code, cancellationToken);
 	}
 
 	private async Task<bool> DownloadAndProcessCityZipAsync(string url, string countryIsoAlpha2Code,
