@@ -9,6 +9,12 @@ ENV ASPNETCORE_URLS=http://+:8080
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
+# Install Native AOT prerequisites (clang and required libraries)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    clang \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY ["GeoResolver/GeoResolver.csproj", "GeoResolver/"]
 RUN dotnet restore "GeoResolver/GeoResolver.csproj"

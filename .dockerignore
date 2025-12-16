@@ -218,6 +218,15 @@
 **/azds.yaml
 **/Tools/
 
+# Data updater project (not needed for API build)
+GeoResolver.DataUpdater/
+**/GeoResolver.DataUpdater/
+
+# Cache directories (large files)
+**/cache/
+**/*cache*/
+**/geofabrik/
+
 # Documentation (not needed in Docker images)
 README.md
 **/*.md
@@ -239,6 +248,14 @@ README.md
 **/UpgradeLog*.htm
 **/ServiceFabricBackup/
 **/*.rptproj.bak
+
+# Large data files and archives
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.gz
+**/*.7z
+**/*.rar
 
 # SQL Server files
 **/*.mdf

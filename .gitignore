@@ -567,3 +567,20 @@ FodyWeavers.xsd
 
 # OSM geofabrik
 **/*.pbf
+
+# Cache directories (large data files)
+**/cache/
+**/*cache*/
+**/geofabrik/
+
+# Large archive files
+# **/*.zip
+# **/*.tar
+# **/*.tar.gz
+# **/*.gz
+# **/*.7z
+# **/*.rar
+
+# Data updater build outputs (if not already covered)
+GeoResolver.DataUpdater/bin/
+GeoResolver.DataUpdater/obj/
