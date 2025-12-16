@@ -2,13 +2,15 @@ name: Build and Publish Docker Image
 
 on:
   push:
+    branches:
+      - 'release'
     tags:
       - 'v*'
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/geo-resolver
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -41,7 +43,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type == 'branch' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
