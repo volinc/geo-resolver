@@ -520,7 +520,7 @@ public sealed class OsmCityShapefileLoader : IOsmCityShapefileLoader
 		// 	"fclass IN ('city', 'town', 'national_capital') OR population >= 10000";
 
 		var whereClause =
-			"fclass IN ('city', 'national_capital') OR population >= 10000";
+			"fclass IN ('city', 'town', 'national_capital') OR population >= 50000";
 
 		try
 		{
