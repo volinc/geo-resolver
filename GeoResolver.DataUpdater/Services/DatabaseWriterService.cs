@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -975,6 +976,19 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var totalFeatures = features.GetArrayLength();
 		_logger?.LogInformation("Starting import of {TotalCount} city features from GeoJSON", totalFeatures);
 
+		// If defaultCountryIsoAlpha2Code is provided, convert it to alpha-3 once at the beginning
+		// Since we're loading cities from one country per file, we can convert alpha-2 to alpha-3 once and reuse it
+		string? defaultCountryIsoAlpha3Code = null;
+		if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha2Code))
+		{
+			defaultCountryIsoAlpha3Code = ConvertAlpha2ToAlpha3(defaultCountryIsoAlpha2Code);
+			if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha3Code))
+			{
+				_logger?.LogDebug("Converted alpha-2 code {Alpha2} to alpha-3 code {Alpha3} using RegionInfo",
+					defaultCountryIsoAlpha2Code, defaultCountryIsoAlpha3Code);
+			}
+		}
+
 		await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 		var processed = 0;
 		var skipped = 0;
@@ -982,6 +996,8 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var lastLogTime = DateTime.UtcNow;
 		const int logIntervalSeconds = 10; // Log progress every 10 seconds
 		const int logIntervalCount = 100; // Or every 100 cities
+		var debugLogCount = 0; // Track how many debug logs we've done
+		const int maxDebugLogs = 5; // Log first 5 cities' properties
 
 		foreach (var featureElement in features.EnumerateArray())
 		{
@@ -1107,27 +1123,42 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha2Code))
 				{
 					countryIsoAlpha2Code = defaultCountryIsoAlpha2Code.ToUpperInvariant();
+					// Use the alpha-3 code we obtained at the beginning of the file
+					if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha3Code))
+					{
+						countryIsoAlpha3Code = defaultCountryIsoAlpha3Code;
+					}
 				}
 				else
-			{
-				skipped++;
-				var reason = "Missing or invalid country ISO code";
-				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
-
-				// Log first few skipped cities for debugging
-				if (skipped <= 10)
 				{
-					var cityName = properties.TryGetProperty("name", out var nameProp) &&
-					               nameProp.ValueKind == JsonValueKind.String
-						? nameProp.GetString()
-						: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
-						  nameAsciiProp.ValueKind == JsonValueKind.String
-							? nameAsciiProp.GetString()
-							: "Unknown";
-					_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
-				}
+					skipped++;
+					var reason = "Missing or invalid country ISO code";
+					skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
 
-				continue;
+					// Log first few skipped cities for debugging
+					if (skipped <= 10)
+					{
+						var cityName = properties.TryGetProperty("name", out var nameProp) &&
+						               nameProp.ValueKind == JsonValueKind.String
+							? nameProp.GetString()
+							: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
+							  nameAsciiProp.ValueKind == JsonValueKind.String
+								? nameAsciiProp.GetString()
+								: "Unknown";
+						_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
+					}
+
+					continue;
+				}
+			}
+			// If we have alpha-2 but not alpha-3, and we have default alpha-3, use it
+			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+			{
+				if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha3Code) &&
+				    string.Equals(countryIsoAlpha2Code, defaultCountryIsoAlpha2Code, StringComparison.OrdinalIgnoreCase))
+				{
+					// Use the alpha-3 code we converted at the beginning of the file
+					countryIsoAlpha3Code = defaultCountryIsoAlpha3Code;
 				}
 			}
 
@@ -1248,24 +1279,170 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 			// Note: Spatial join for region_identifier is done in post-processing
 
-			// Generate city identifier - use nameascii + country code, or geonames_id if available
-			string identifier;
-			if (properties.TryGetProperty("GEONAMEID", out var geonameIdUpper) &&
-			    geonameIdUpper.ValueKind == JsonValueKind.Number)
-				identifier = geonameIdUpper.GetInt64().ToString();
-			else if (properties.TryGetProperty("geonameid", out var geonameId) &&
-			         geonameId.ValueKind == JsonValueKind.Number)
-				identifier = geonameId.GetInt64().ToString();
-			else if (properties.TryGetProperty("GN_ID", out var gnId) && gnId.ValueKind == JsonValueKind.Number)
-				identifier = gnId.GetInt64().ToString();
-			else
-				// Use combination of name and country code as identifier
-				identifier = $"{nameLatin}_{countryIsoAlpha2Code ?? countryIsoAlpha3Code}";
+			// Generate city identifier - use Wikidata QID if available, otherwise use empty string
+			string identifier = "";
 
-			// Normalize identifier
-			identifier = Regex.Replace(identifier, @"[^a-zA-Z0-9_]", "_");
-			identifier = Regex.Replace(identifier, @"_+", "_");
-			identifier = identifier.Trim('_');
+			// Log first few features to debug which fields are available
+			if (debugLogCount < maxDebugLogs)
+			{
+				_logger?.LogInformation("=== City #{Index} '{CityName}' - Available GeoJSON Properties ===", 
+					debugLogCount + 1, nameLatin);
+				foreach (var prop in properties.EnumerateObject())
+				{
+					string valuePreview;
+					if (prop.Value.ValueKind == JsonValueKind.String)
+					{
+						var strValue = prop.Value.GetString() ?? "null";
+						valuePreview = strValue.Length > 100 ? strValue.Substring(0, 100) + "..." : strValue;
+					}
+					else
+					{
+						var rawText = prop.Value.GetRawText();
+						valuePreview = rawText.Length > 100 ? rawText.Substring(0, 100) + "..." : rawText;
+					}
+					_logger?.LogInformation("  Field: '{FieldName}' ({ValueKind}) = '{Value}'", 
+						prop.Name, prop.Value.ValueKind, valuePreview);
+				}
+				debugLogCount++;
+			}
+
+			// Helper function to extract QID from various formats
+			string? ExtractQid(JsonElement element)
+			{
+				if (element.ValueKind != JsonValueKind.String)
+					return null;
+				
+				var value = element.GetString();
+				if (string.IsNullOrWhiteSpace(value))
+					return null;
+				
+				// Trim whitespace
+				value = value.Trim();
+				
+				// Handle URL format: https://www.wikidata.org/wiki/Q1234 or https://www.wikidata.org/entity/Q1234
+				if (value.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+				{
+					var match = Regex.Match(value, @"Q\d+", RegexOptions.IgnoreCase);
+					if (match.Success)
+						return match.Value.ToUpperInvariant();
+					return null; // URL format but no QID found
+				}
+				// Handle QID format: Q1234 or q1234
+				if (value.StartsWith("Q", StringComparison.OrdinalIgnoreCase))
+				{
+					// Validate it's a proper QID format (Q followed by digits)
+					if (Regex.IsMatch(value, @"^Q\d+$", RegexOptions.IgnoreCase))
+						return value.ToUpperInvariant();
+					return null; // Invalid QID format
+				}
+				// Handle numeric format: 1234 (convert to Q1234)
+				if (Regex.IsMatch(value, @"^\d+$"))
+				{
+					return $"Q{value}";
+				}
+				// Not a valid QID format
+				return null;
+			}
+
+			// Try various field names for Wikidata QID
+			var wikidataFields = new[]
+			{
+				"wikidata", "WIKIDATA", "wikidataid", "WIKIDATAID", "wikidata_id", "WIKIDATA_ID",
+				"wikidataId", "WikidataId", "qid", "QID", "wikidata_qid", "WIKIDATA_QID",
+				"ref:wikidata", "REF:WIKIDATA", "ref_wikidata", "REF_WIKIDATA"
+			};
+
+			foreach (var fieldName in wikidataFields)
+			{
+				if (properties.TryGetProperty(fieldName, out var wikidataProp))
+				{
+					var rawValue = wikidataProp.ValueKind == JsonValueKind.String 
+						? wikidataProp.GetString() 
+						: wikidataProp.GetRawText();
+					
+					if (debugLogCount <= maxDebugLogs)
+						_logger?.LogInformation("  Trying field '{FieldName}' - found value: '{Value}' (type: {ValueKind})", 
+							fieldName, rawValue ?? "null", wikidataProp.ValueKind);
+					
+					var qidValue = ExtractQid(wikidataProp);
+					if (!string.IsNullOrWhiteSpace(qidValue))
+					{
+						identifier = qidValue;
+						_logger?.LogInformation("  ✓ Found Wikidata QID '{Qid}' in field '{Field}' for city '{City}'", 
+							qidValue, fieldName, nameLatin);
+						break;
+					}
+					else if (debugLogCount <= maxDebugLogs && !string.IsNullOrWhiteSpace(rawValue))
+					{
+						_logger?.LogWarning("  ✗ Field '{FieldName}' exists but value '{Value}' is not a valid QID format", 
+							fieldName, rawValue);
+					}
+				}
+			}
+
+			// If still not found, try case-insensitive search through all properties
+			if (string.IsNullOrWhiteSpace(identifier))
+			{
+				foreach (var prop in properties.EnumerateObject())
+				{
+					var propName = prop.Name;
+					if (propName.Contains("wikidata", StringComparison.OrdinalIgnoreCase) ||
+					    propName.Contains("qid", StringComparison.OrdinalIgnoreCase))
+					{
+						var rawValue = prop.Value.ValueKind == JsonValueKind.String 
+							? prop.Value.GetString() 
+							: prop.Value.GetRawText();
+						
+						if (debugLogCount <= maxDebugLogs)
+							_logger?.LogInformation("  Trying case-insensitive match on field '{FieldName}' - found value: '{Value}'", 
+								propName, rawValue ?? "null");
+						
+						var qidValue = ExtractQid(prop.Value);
+						if (!string.IsNullOrWhiteSpace(qidValue))
+						{
+							identifier = qidValue;
+							_logger?.LogInformation("  ✓ Found Wikidata QID '{Qid}' in field '{Field}' (case-insensitive) for city '{City}'", 
+								qidValue, propName, nameLatin);
+							break;
+						}
+					}
+				}
+			}
+
+			// If Wikidata QID not found, fallback to OSM ID if available
+			if (string.IsNullOrWhiteSpace(identifier))
+			{
+				if (debugLogCount <= maxDebugLogs)
+					_logger?.LogWarning("  ✗ Wikidata QID not found for city '{City}' - trying OSM ID as fallback", nameLatin);
+				
+				// Try to get OSM ID as fallback identifier
+				if (properties.TryGetProperty("osm_id", out var osmIdProp))
+				{
+					string? osmIdValue = null;
+					if (osmIdProp.ValueKind == JsonValueKind.String)
+					{
+						osmIdValue = osmIdProp.GetString();
+					}
+					else if (osmIdProp.ValueKind == JsonValueKind.Number)
+					{
+						osmIdValue = osmIdProp.GetInt64().ToString();
+					}
+					
+					if (!string.IsNullOrWhiteSpace(osmIdValue))
+					{
+						identifier = $"osm:{osmIdValue}";
+						if (debugLogCount <= maxDebugLogs)
+							_logger?.LogInformation("  ✓ Using OSM ID '{OsmId}' as identifier for city '{City}'", identifier, nameLatin);
+					}
+				}
+				
+				// If still empty, log warning
+				if (string.IsNullOrWhiteSpace(identifier))
+				{
+					if (debugLogCount <= maxDebugLogs)
+						_logger?.LogWarning("  ✗ No identifier available for city '{City}' - identifier will be empty", nameLatin);
+				}
+			}
 
 			// Build the INSERT query dynamically based on which codes we have
 			string insertQuery;
@@ -1613,5 +1790,26 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		if (result is DateTime dateTime) return new DateTimeOffset(dateTime, TimeSpan.Zero);
 
 		return null;
+	}
+
+	/// <summary>
+	///     Converts ISO 3166-1 alpha-2 country code to alpha-3 code using RegionInfo.
+	///     Returns null if conversion fails.
+	/// </summary>
+	private static string? ConvertAlpha2ToAlpha3(string alpha2Code)
+	{
+		if (string.IsNullOrWhiteSpace(alpha2Code) || alpha2Code.Length != 2)
+			return null;
+
+		try
+		{
+			var regionInfo = new RegionInfo(alpha2Code);
+			return regionInfo.ThreeLetterISORegionName;
+		}
+		catch
+		{
+			// RegionInfo throws ArgumentException if the code is invalid
+			return null;
+		}
 	}
 }

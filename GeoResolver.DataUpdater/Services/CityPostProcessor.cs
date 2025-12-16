@@ -138,26 +138,28 @@ public sealed class CityPostProcessor : ICityPostProcessor
 						if (city.Name.Contains("Vovchans", StringComparison.OrdinalIgnoreCase) || 
 						    city.Name.Contains("Вовчанск", StringComparison.OrdinalIgnoreCase))
 						{
-							await using var verifyCmd = new NpgsqlCommand(@"
+							await using (var verifyCmd = new NpgsqlCommand(@"
                                 SELECT id, name_latin, region_identifier, country_iso_alpha2_code, country_iso_alpha3_code
                                 FROM cities
-                                WHERE id = @cityId;", connection);
-							verifyCmd.Parameters.AddWithValue("cityId", city.Id);
-							await using var verifyReader = await verifyCmd.ExecuteReaderAsync(cancellationToken);
-							if (await verifyReader.ReadAsync(cancellationToken))
+                                WHERE id = @cityId;", connection, deleteTransaction))
 							{
-								var stillExists = verifyReader.GetInt32(0);
-								var name = verifyReader.GetString(1);
-								var regionId = verifyReader.IsDBNull(2) ? null : verifyReader.GetString(2);
-								var alpha2 = verifyReader.IsDBNull(3) ? null : verifyReader.GetString(3);
-								var alpha3 = verifyReader.IsDBNull(4) ? null : verifyReader.GetString(4);
-								_logger?.LogError("ERROR: Vovchansk (ID {Id}, Name: {Name}) still exists after deletion! Region: {Region}, Country: {Country}", 
-									stillExists, name, regionId ?? "NULL", alpha2 ?? alpha3 ?? "NULL");
-							}
-							else
-							{
-								_logger?.LogInformation("Vovchansk (ID {Id}) was successfully deleted", city.Id);
-							}
+								verifyCmd.Parameters.AddWithValue("cityId", city.Id);
+								await using var verifyReader = await verifyCmd.ExecuteReaderAsync(cancellationToken);
+								if (await verifyReader.ReadAsync(cancellationToken))
+								{
+									var stillExists = verifyReader.GetInt32(0);
+									var name = verifyReader.GetString(1);
+									var regionId = verifyReader.IsDBNull(2) ? null : verifyReader.GetString(2);
+									var alpha2 = verifyReader.IsDBNull(3) ? null : verifyReader.GetString(3);
+									var alpha3 = verifyReader.IsDBNull(4) ? null : verifyReader.GetString(4);
+									_logger?.LogError("ERROR: Vovchansk (ID {Id}, Name: {Name}) still exists after deletion! Region: {Region}, Country: {Country}", 
+										stillExists, name, regionId ?? "NULL", alpha2 ?? alpha3 ?? "NULL");
+								}
+								else
+								{
+									_logger?.LogInformation("Vovchansk (ID {Id}) was successfully deleted", city.Id);
+								}
+							} // Reader and command are fully disposed here
 						}
 					}
 				}
@@ -174,29 +176,31 @@ public sealed class CityPostProcessor : ICityPostProcessor
 			}
 			
 			// Also check for cities without country codes but with NULL region_identifier - these should also be deleted
-			await using var noCountryCmd = new NpgsqlCommand(@"
+			var noCountryCities = new List<(int Id, string Name)>();
+			await using (var noCountryCmd = new NpgsqlCommand(@"
                 SELECT id, name_latin, region_identifier
                 FROM cities
                 WHERE region_identifier IS NULL
                   AND country_iso_alpha2_code IS NULL
-                  AND country_iso_alpha3_code IS NULL;", connection);
-			await using var noCountryReader = await noCountryCmd.ExecuteReaderAsync(cancellationToken);
-			var noCountryCities = new List<(int Id, string Name)>();
-			while (await noCountryReader.ReadAsync(cancellationToken))
+                  AND country_iso_alpha3_code IS NULL;", connection))
 			{
-				var id = noCountryReader.GetInt32(0);
-				var name = noCountryReader.GetString(1);
-				var regionId = noCountryReader.IsDBNull(2) ? null : noCountryReader.GetString(2);
-				noCountryCities.Add((id, name));
-				
-				// Log Vovchansk specifically
-				if (name.Contains("Vovchans", StringComparison.OrdinalIgnoreCase) || 
-				    name.Contains("Вовчанск", StringComparison.OrdinalIgnoreCase))
+				await using var noCountryReader = await noCountryCmd.ExecuteReaderAsync(cancellationToken);
+				while (await noCountryReader.ReadAsync(cancellationToken))
 				{
-					_logger?.LogWarning("Found Vovchansk without country codes: ID {Id}, Name: {Name}, Region: {Region}", 
-						id, name, regionId ?? "NULL");
+					var id = noCountryReader.GetInt32(0);
+					var name = noCountryReader.GetString(1);
+					var regionId = noCountryReader.IsDBNull(2) ? null : noCountryReader.GetString(2);
+					noCountryCities.Add((id, name));
+					
+					// Log Vovchansk specifically
+					if (name.Contains("Vovchans", StringComparison.OrdinalIgnoreCase) || 
+					    name.Contains("Вовчанск", StringComparison.OrdinalIgnoreCase))
+					{
+						_logger?.LogWarning("Found Vovchansk without country codes: ID {Id}, Name: {Name}, Region: {Region}", 
+							id, name, regionId ?? "NULL");
+					}
 				}
-			}
+			} // Reader and command are fully disposed here
 			
 			if (noCountryCities.Count > 0)
 			{
@@ -216,21 +220,23 @@ public sealed class CityPostProcessor : ICityPostProcessor
 			}
 			
 			// Final check: search for Vovchansk by name to see if it still exists
-			await using var finalCheckCmd = new NpgsqlCommand(@"
+			await using (var finalCheckCmd = new NpgsqlCommand(@"
                 SELECT id, name_latin, region_identifier, country_iso_alpha2_code, country_iso_alpha3_code
                 FROM cities
-                WHERE name_latin ILIKE '%vovchans%' OR name_latin ILIKE '%вовчанск%';", connection);
-			await using var finalCheckReader = await finalCheckCmd.ExecuteReaderAsync(cancellationToken);
-			while (await finalCheckReader.ReadAsync(cancellationToken))
+                WHERE name_latin ILIKE '%vovchans%' OR name_latin ILIKE '%вовчанск%';", connection))
 			{
-				var id = finalCheckReader.GetInt32(0);
-				var name = finalCheckReader.GetString(1);
-				var regionId = finalCheckReader.IsDBNull(2) ? null : finalCheckReader.GetString(2);
-				var alpha2 = finalCheckReader.IsDBNull(3) ? null : finalCheckReader.GetString(3);
-				var alpha3 = finalCheckReader.IsDBNull(4) ? null : finalCheckReader.GetString(4);
-				_logger?.LogError("Vovchansk still exists in database after deletion attempts: ID {Id}, Name: {Name}, Region: {Region}, Country: {Country}", 
-					id, name, regionId ?? "NULL", alpha2 ?? alpha3 ?? "NULL");
-			}
+				await using var finalCheckReader = await finalCheckCmd.ExecuteReaderAsync(cancellationToken);
+				while (await finalCheckReader.ReadAsync(cancellationToken))
+				{
+					var id = finalCheckReader.GetInt32(0);
+					var name = finalCheckReader.GetString(1);
+					var regionId = finalCheckReader.IsDBNull(2) ? null : finalCheckReader.GetString(2);
+					var alpha2 = finalCheckReader.IsDBNull(3) ? null : finalCheckReader.GetString(3);
+					var alpha3 = finalCheckReader.IsDBNull(4) ? null : finalCheckReader.GetString(4);
+					_logger?.LogError("Vovchansk still exists in database after deletion attempts: ID {Id}, Name: {Name}, Region: {Region}, Country: {Country}", 
+						id, name, regionId ?? "NULL", alpha2 ?? alpha3 ?? "NULL");
+				}
+			} // Reader and command are fully disposed here
 		}
 		catch (Exception ex)
 		{
