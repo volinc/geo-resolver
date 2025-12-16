@@ -1100,8 +1100,6 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		var lastLogTime = DateTime.UtcNow;
 		const int logIntervalSeconds = 10; // Log progress every 10 seconds
 		const int logIntervalCount = 100; // Or every 100 cities
-		var debugLogCount = 0; // Track how many debug logs we've done
-		const int maxDebugLogs = 5; // Log first 5 cities' properties
 
 		foreach (var featureElement in features.EnumerateArray())
 		{
@@ -1364,168 +1362,25 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 			// Note: Spatial join for region_identifier is done in post-processing
 
-			// Generate city identifier - use Wikidata QID if available, otherwise use empty string
+			// Generate city identifier - use OSM ID if available, otherwise use empty string
 			string identifier = "";
 
-			// Log first few features to debug which fields are available
-			if (debugLogCount < maxDebugLogs)
+			// Try to get OSM ID as identifier
+			if (properties.TryGetProperty("osm_id", out var osmIdProp))
 			{
-				_logger?.LogInformation("=== City #{Index} '{CityName}' - Available GeoJSON Properties ===", 
-					debugLogCount + 1, nameLatin);
-				foreach (var prop in properties.EnumerateObject())
+				string? osmIdValue = null;
+				if (osmIdProp.ValueKind == JsonValueKind.String)
 				{
-					string valuePreview;
-					if (prop.Value.ValueKind == JsonValueKind.String)
-					{
-						var strValue = prop.Value.GetString() ?? "null";
-						valuePreview = strValue.Length > 100 ? strValue.Substring(0, 100) + "..." : strValue;
-					}
-					else
-					{
-						var rawText = prop.Value.GetRawText();
-						valuePreview = rawText.Length > 100 ? rawText.Substring(0, 100) + "..." : rawText;
-					}
-					_logger?.LogInformation("  Field: '{FieldName}' ({ValueKind}) = '{Value}'", 
-						prop.Name, prop.Value.ValueKind, valuePreview);
+					osmIdValue = osmIdProp.GetString();
 				}
-				debugLogCount++;
-			}
-
-			// Helper function to extract QID from various formats
-			string? ExtractQid(JsonElement element)
-			{
-				if (element.ValueKind != JsonValueKind.String)
-					return null;
-				
-				var value = element.GetString();
-				if (string.IsNullOrWhiteSpace(value))
-					return null;
-				
-				// Trim whitespace
-				value = value.Trim();
-				
-				// Handle URL format: https://www.wikidata.org/wiki/Q1234 or https://www.wikidata.org/entity/Q1234
-				if (value.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+				else if (osmIdProp.ValueKind == JsonValueKind.Number)
 				{
-					var match = Regex.Match(value, @"Q\d+", RegexOptions.IgnoreCase);
-					if (match.Success)
-						return match.Value.ToUpperInvariant();
-					return null; // URL format but no QID found
-				}
-				// Handle QID format: Q1234 or q1234
-				if (value.StartsWith("Q", StringComparison.OrdinalIgnoreCase))
-				{
-					// Validate it's a proper QID format (Q followed by digits)
-					if (Regex.IsMatch(value, @"^Q\d+$", RegexOptions.IgnoreCase))
-						return value.ToUpperInvariant();
-					return null; // Invalid QID format
-				}
-				// Handle numeric format: 1234 (convert to Q1234)
-				if (Regex.IsMatch(value, @"^\d+$"))
-				{
-					return $"Q{value}";
-				}
-				// Not a valid QID format
-				return null;
-			}
-
-			// Try various field names for Wikidata QID
-			var wikidataFields = new[]
-			{
-				"wikidata", "WIKIDATA", "wikidataid", "WIKIDATAID", "wikidata_id", "WIKIDATA_ID",
-				"wikidataId", "WikidataId", "qid", "QID", "wikidata_qid", "WIKIDATA_QID",
-				"ref:wikidata", "REF:WIKIDATA", "ref_wikidata", "REF_WIKIDATA"
-			};
-
-			foreach (var fieldName in wikidataFields)
-			{
-				if (properties.TryGetProperty(fieldName, out var wikidataProp))
-				{
-					var rawValue = wikidataProp.ValueKind == JsonValueKind.String 
-						? wikidataProp.GetString() 
-						: wikidataProp.GetRawText();
-					
-					if (debugLogCount <= maxDebugLogs)
-						_logger?.LogInformation("  Trying field '{FieldName}' - found value: '{Value}' (type: {ValueKind})", 
-							fieldName, rawValue ?? "null", wikidataProp.ValueKind);
-					
-					var qidValue = ExtractQid(wikidataProp);
-					if (!string.IsNullOrWhiteSpace(qidValue))
-					{
-						identifier = qidValue;
-						_logger?.LogInformation("  ✓ Found Wikidata QID '{Qid}' in field '{Field}' for city '{City}'", 
-							qidValue, fieldName, nameLatin);
-						break;
-					}
-					else if (debugLogCount <= maxDebugLogs && !string.IsNullOrWhiteSpace(rawValue))
-					{
-						_logger?.LogWarning("  ✗ Field '{FieldName}' exists but value '{Value}' is not a valid QID format", 
-							fieldName, rawValue);
-					}
-				}
-			}
-
-			// If still not found, try case-insensitive search through all properties
-			if (string.IsNullOrWhiteSpace(identifier))
-			{
-				foreach (var prop in properties.EnumerateObject())
-				{
-					var propName = prop.Name;
-					if (propName.Contains("wikidata", StringComparison.OrdinalIgnoreCase) ||
-					    propName.Contains("qid", StringComparison.OrdinalIgnoreCase))
-					{
-						var rawValue = prop.Value.ValueKind == JsonValueKind.String 
-							? prop.Value.GetString() 
-							: prop.Value.GetRawText();
-						
-						if (debugLogCount <= maxDebugLogs)
-							_logger?.LogInformation("  Trying case-insensitive match on field '{FieldName}' - found value: '{Value}'", 
-								propName, rawValue ?? "null");
-						
-						var qidValue = ExtractQid(prop.Value);
-						if (!string.IsNullOrWhiteSpace(qidValue))
-						{
-							identifier = qidValue;
-							_logger?.LogInformation("  ✓ Found Wikidata QID '{Qid}' in field '{Field}' (case-insensitive) for city '{City}'", 
-								qidValue, propName, nameLatin);
-							break;
-						}
-					}
-				}
-			}
-
-			// If Wikidata QID not found, fallback to OSM ID if available
-			if (string.IsNullOrWhiteSpace(identifier))
-			{
-				if (debugLogCount <= maxDebugLogs)
-					_logger?.LogWarning("  ✗ Wikidata QID not found for city '{City}' - trying OSM ID as fallback", nameLatin);
-				
-				// Try to get OSM ID as fallback identifier
-				if (properties.TryGetProperty("osm_id", out var osmIdProp))
-				{
-					string? osmIdValue = null;
-					if (osmIdProp.ValueKind == JsonValueKind.String)
-					{
-						osmIdValue = osmIdProp.GetString();
-					}
-					else if (osmIdProp.ValueKind == JsonValueKind.Number)
-					{
-						osmIdValue = osmIdProp.GetInt64().ToString();
-					}
-					
-					if (!string.IsNullOrWhiteSpace(osmIdValue))
-					{
-						identifier = osmIdValue;
-						if (debugLogCount <= maxDebugLogs)
-							_logger?.LogInformation("  ✓ Using OSM ID '{OsmId}' as identifier for city '{City}'", identifier, nameLatin);
-					}
+					osmIdValue = osmIdProp.GetInt64().ToString();
 				}
 				
-				// If still empty, log warning
-				if (string.IsNullOrWhiteSpace(identifier))
+				if (!string.IsNullOrWhiteSpace(osmIdValue))
 				{
-					if (debugLogCount <= maxDebugLogs)
-						_logger?.LogWarning("  ✗ No identifier available for city '{City}' - identifier will be empty", nameLatin);
+					identifier = osmIdValue;
 				}
 			}
 
