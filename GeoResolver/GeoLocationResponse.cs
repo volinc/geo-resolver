@@ -14,7 +14,7 @@ public sealed record GeoLocationResponse
     public string? CountryIsoAlpha3Code { get; init; }
 
     /// <summary>
-    /// Country name in Latin transliteration (invariant) or translation into English
+    /// Country name in translated into English
     /// </summary>
     public string? CountryNameLatin { get; init; }
 
