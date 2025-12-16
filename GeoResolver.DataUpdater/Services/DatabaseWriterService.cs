@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -16,11 +15,13 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 {
 	private readonly ICityPostProcessor _cityPostProcessor;
 	private readonly ITransliterationService _transliterationService;
-	private readonly ILogger<DatabaseWriterService>? _logger;
+	private readonly ILogger<DatabaseWriterService> _logger;
 	private readonly NpgsqlDataSource _npgsqlDataSource;
 
-	public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, ICityPostProcessor cityPostProcessor,
-		ITransliterationService transliterationService, ILogger<DatabaseWriterService>? logger = null)
+	public DatabaseWriterService(NpgsqlDataSource npgsqlDataSource, 
+		ICityPostProcessor cityPostProcessor,
+		ITransliterationService transliterationService, 
+		ILogger<DatabaseWriterService> logger)
 	{
 		_npgsqlDataSource = npgsqlDataSource;
 		_cityPostProcessor = cityPostProcessor;
@@ -458,6 +459,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 	}
 
 	public async Task ImportRegionsFromGeoJsonAsync(string geoJsonContent,
+		HashSet<string>? allowedCountryCodes = null,
 		CancellationToken cancellationToken = default)
 	{
 		// Check if GeoJSON contains Moscow-related regions
@@ -467,7 +469,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		
 		if (containsMoscow)
 		{
-			_logger?.LogInformation("GeoJSON contains Moscow-related regions. Searching for exact matches...");
+			_logger.LogInformation("GeoJSON contains Moscow-related regions. Searching for exact matches...");
 			
 			// Find all occurrences and log context
 			var moscowMatches = new List<string>();
@@ -496,7 +498,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 		}
 		else
 		{
-			_logger?.LogWarning("GeoJSON does NOT contain Moscow-related regions (checked for 'Moscow', 'Московская', 'Moskovskaya')");
+			_logger.LogWarning("GeoJSON does NOT contain Moscow-related regions (checked for 'Moscow', 'Московская', 'Moskovskaya')");
 		}
 
 		await using var connection = _npgsqlDataSource.CreateConnection();
@@ -592,18 +594,38 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					var regionName = properties.TryGetProperty("name", out var nameProp) &&
 					                 nameProp.ValueKind == JsonValueKind.String
 						? nameProp.GetString()
-						: properties.TryGetProperty("name_en", out var nameEnProp) &&
-						  nameEnProp.ValueKind == JsonValueKind.String
-							? nameEnProp.GetString()
-							: properties.TryGetProperty("NAME", out var nameUpperProp) &&
-							  nameUpperProp.ValueKind == JsonValueKind.String
-								? nameUpperProp.GetString()
+						: properties.TryGetProperty("name_local", out var nameLocalProp) &&
+						  nameLocalProp.ValueKind == JsonValueKind.String
+							? nameLocalProp.GetString()
 							: "Unknown";
 					_logger?.LogWarning("Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
 						regionName, properties.GetRawText());
 				}
 
 				continue;
+			}
+
+			// Filter by allowed country codes if specified
+			if (allowedCountryCodes != null && allowedCountryCodes.Count > 0)
+			{
+				var isAllowed = false;
+				if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code) && 
+				    allowedCountryCodes.Contains(countryIsoAlpha2Code, StringComparer.OrdinalIgnoreCase))
+					isAllowed = true;
+				else if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
+				{
+					// Try to match by alpha-3 code (need to check if any allowed code matches this alpha-3)
+					// For now, we'll skip alpha-3 matching and rely on alpha-2
+					// If needed, we can add a lookup from countries table
+				}
+
+				if (!isAllowed)
+				{
+					skipped++;
+					var reason = "Country not in allowed list";
+					skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+					continue;
+				}
 			}
 
 			// If we have alpha-2 but not alpha-3, try to get alpha-3 from countries table
@@ -815,7 +837,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
-			cmd.Parameters.AddWithValue("nameLocal", nameLocal ?? (object)DBNull.Value);
+			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
@@ -832,8 +854,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				// Log database errors (constraint violations, etc.)
 				skipped++;
 				var reason = $"Database error: {pgEx.SqlState} - {pgEx.Message}";
-				if (!skippedReasons.ContainsKey(reason))
-					skippedReasons[reason] = 0;
+				skippedReasons.TryAdd(reason, 0);
 				skippedReasons[reason]++;
 
 				// Log first few errors for debugging
@@ -847,8 +868,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				// Skip invalid geometries or other errors
 				skipped++;
 				var reason = $"Error: {ex.GetType().Name}";
-				if (!skippedReasons.ContainsKey(reason))
-					skippedReasons[reason] = 0;
+				skippedReasons.TryAdd(reason, 0);
 				skippedReasons[reason]++;
 
 				if (skipped <= 10)
@@ -984,7 +1004,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 		// Count total features for progress logging
 		var totalFeatures = features.GetArrayLength();
-		_logger?.LogInformation("Starting import of {TotalCount} city features from GeoJSON", totalFeatures);
+		_logger.LogInformation("Starting import of {TotalCount} city features from GeoJSON", totalFeatures);
 
 		// If defaultCountryIsoAlpha2Code is provided, convert it to alpha-3 once at the beginning
 		// Since we're loading cities from one country per file, we can convert alpha-2 to alpha-3 once and reuse it
@@ -994,7 +1014,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			defaultCountryIsoAlpha3Code = ConvertAlpha2ToAlpha3(defaultCountryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(defaultCountryIsoAlpha3Code))
 			{
-				_logger?.LogDebug("Converted alpha-2 code {Alpha2} to alpha-3 code {Alpha3} using RegionInfo",
+				_logger.LogDebug("Converted alpha-2 code {Alpha2} to alpha-3 code {Alpha3} using RegionInfo",
 					defaultCountryIsoAlpha2Code, defaultCountryIsoAlpha3Code);
 			}
 		}
@@ -1473,7 +1493,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
-			cmd.Parameters.AddWithValue("nameLocal", nameLocal ?? (object)DBNull.Value);
+			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha3Code))
@@ -1508,7 +1528,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				if (skipped <= 10)
 				{
 					_logger?.LogWarning(ex, "Failed to insert city '{CityName}' (identifier: {Identifier}, country: {Country}): {Error}", 
-						nameLatin, identifier ?? "NULL", countryIsoAlpha2Code ?? countryIsoAlpha3Code ?? "NULL", ex.Message);
+						nameLatin, identifier, countryIsoAlpha2Code ?? countryIsoAlpha3Code ?? "NULL", ex.Message);
 				}
 			}
 		}
@@ -1616,8 +1636,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				skipped++;
 				var reason = $"Database error: {pgEx.SqlState} - {pgEx.Message}";
-				if (!skippedReasons.ContainsKey(reason))
-					skippedReasons[reason] = 0;
+				skippedReasons.TryAdd(reason, 0);
 				skippedReasons[reason]++;
 
 				if (skipped <= 10)
@@ -1627,8 +1646,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				skipped++;
 				var reason = $"Error: {ex.GetType().Name}";
-				if (!skippedReasons.ContainsKey(reason))
-					skippedReasons[reason] = 0;
+				skippedReasons.TryAdd(reason, 0);
 				skippedReasons[reason]++;
 
 				if (skipped <= 10) _logger?.LogWarning(ex, "Failed to insert timezone '{TimezoneId}'", timezoneId);

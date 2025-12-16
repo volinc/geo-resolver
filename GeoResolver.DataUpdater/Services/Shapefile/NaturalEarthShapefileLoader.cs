@@ -1,7 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Linq;
+using GeoResolver.DataUpdater;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GeoResolver.DataUpdater.Services.Shapefile;
 
@@ -24,15 +27,18 @@ public sealed class NaturalEarthShapefileLoader : INaturalEarthShapefileLoader
 	private readonly IDatabaseWriterService _databaseWriterService;
 	private readonly IHttpClientFactory _httpClientFactory;
 	private readonly ILogger<NaturalEarthShapefileLoader> _logger;
+	private readonly IOptions<RegionLoaderOptions> _regionOptions;
 
 	public NaturalEarthShapefileLoader(
 		ILogger<NaturalEarthShapefileLoader> logger,
 		IHttpClientFactory httpClientFactory,
-		IDatabaseWriterService databaseWriterService)
+		IDatabaseWriterService databaseWriterService,
+		IOptions<RegionLoaderOptions> regionOptions)
 	{
 		_logger = logger;
 		_httpClientFactory = httpClientFactory;
 		_databaseWriterService = databaseWriterService;
+		_regionOptions = regionOptions;
 	}
 
 	/// <summary>
@@ -389,7 +395,24 @@ public sealed class NaturalEarthShapefileLoader : INaturalEarthShapefileLoader
 
 			var importStopwatch = Stopwatch.StartNew();
 			_logger.LogInformation("Importing regions to database...");
-			await _databaseWriterService.ImportRegionsFromGeoJsonAsync(geoJson, cancellationToken);
+			// Prepare allowed country codes for filtering
+			HashSet<string>? allowedCountryCodes = null;
+			var configuredCodes = _regionOptions.Value.Countries;
+			if (configuredCodes.Length > 0)
+			{
+				allowedCountryCodes = new HashSet<string>(
+					configuredCodes.Select(c => c.Trim().ToUpperInvariant())
+						.Where(c => !string.IsNullOrWhiteSpace(c) && c.Length == 2),
+					StringComparer.OrdinalIgnoreCase);
+				_logger.LogInformation("RegionLoader:Countries configured - will filter regions for {Count} countries: {Countries}",
+					allowedCountryCodes.Count, string.Join(", ", allowedCountryCodes));
+			}
+			else
+			{
+				_logger.LogInformation("RegionLoader:Countries is empty or not configured - will load all regions");
+			}
+
+			await _databaseWriterService.ImportRegionsFromGeoJsonAsync(geoJson, allowedCountryCodes, cancellationToken);
 			importStopwatch.Stop();
 			_logger.LogInformation("Regions imported to database in {ElapsedMilliseconds}ms ({ElapsedSeconds:F2}s)",
 				importStopwatch.ElapsedMilliseconds, importStopwatch.Elapsed.TotalSeconds);

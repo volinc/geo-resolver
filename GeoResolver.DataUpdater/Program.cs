@@ -43,6 +43,7 @@ services.AddHttpClient();
 // Configure options
 services.AddOptions();
 services.Configure<CityLoaderOptions>(configuration.GetSection("CityLoader"));
+services.Configure<RegionLoaderOptions>(configuration.GetSection("RegionLoader"));
 
 // Register services
 services.AddSingleton<ITransliterationService, TransliterationService>();
