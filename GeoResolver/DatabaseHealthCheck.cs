@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Npgsql;
-
 namespace GeoResolver;
 
 public sealed class DatabaseHealthCheck : IHealthCheck
@@ -9,6 +6,8 @@ public sealed class DatabaseHealthCheck : IHealthCheck
 
     public DatabaseHealthCheck(NpgsqlDataSource npgsqlDataSource)
     {
+        ArgumentNullException.ThrowIfNull(npgsqlDataSource);
+        
         _npgsqlDataSource = npgsqlDataSource;
     }
 

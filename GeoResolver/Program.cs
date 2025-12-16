@@ -1,8 +1,3 @@
-using System.Text.Json.Serialization;
-using GeoResolver;
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Npgsql;
-
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>

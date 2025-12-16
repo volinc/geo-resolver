@@ -1,18 +1,17 @@
-using GeoResolver.Models;
-using NetTopologySuite.Geometries;
-using NodaTime;
-using Npgsql;
-using NpgsqlTypes;
-
 namespace GeoResolver;
 
 public sealed class GeoLocationService
 {
     private readonly NpgsqlDataSource _npgsqlDataSource;
-    private readonly ILogger<GeoLocationService>? _logger;
+    private readonly ILogger<GeoLocationService> _logger;
 
-    public GeoLocationService(NpgsqlDataSource npgsqlDataSource, ILogger<GeoLocationService>? logger = null)
+    private const int Wgs84Srid = 4326;
+
+    public GeoLocationService(NpgsqlDataSource npgsqlDataSource, ILogger<GeoLocationService> logger)
     {
+        ArgumentNullException.ThrowIfNull(npgsqlDataSource);
+        ArgumentNullException.ThrowIfNull(logger);
+        
         _npgsqlDataSource = npgsqlDataSource;
         _logger = logger;
     }
@@ -52,122 +51,129 @@ public sealed class GeoLocationService
         };
     }
 
-    private async Task<Country?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    private static Point CreatePoint(double latitude, double longitude)
+    {
+        return new Point(longitude, latitude) { SRID = Wgs84Srid };
+    }
+
+    private async Task<T?> FindEntityByPointAsync<T>(
+        string sql,
+        Func<NpgsqlDataReader, T> mapFunc,
+        double latitude,
+        double longitude,
+        CancellationToken cancellationToken = default)
     {
         await using var connection = _npgsqlDataSource.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
-        var point = $"POINT({longitude} {latitude})";
-        await using var cmd = new NpgsqlCommand(@"
-            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry
-            FROM countries
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+        var point = CreatePoint(latitude, longitude);
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("point", point);
 
-        cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
-        
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken))
         {
-            return new Country
-            {
-                Id = reader.GetInt32(0),
-                IsoAlpha2Code = reader.GetString(1),
-                IsoAlpha3Code = reader.GetString(2),
-                NameLatin = reader.GetString(3),
-                WikidataId = reader.GetString(4),
-                Geometry = (Geometry)reader.GetValue(5)
-            };
+            return mapFunc(reader);
         }
 
-        return null;
+        return default;
+    }
+
+    private async Task<Country?> FindCountryByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+            SELECT id, iso_alpha2_code, iso_alpha3_code, name_latin, wikidataid, geometry
+            FROM countries
+            WHERE ST_Contains(geometry, @point)
+            LIMIT 1;";
+
+        return await FindEntityByPointAsync(sql, MapCountryFromReader, latitude, longitude, cancellationToken);
     }
 
     private async Task<Region?> FindRegionByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = _npgsqlDataSource.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
-
-        var point = $"POINT({longitude} {latitude})";
-        await using var cmd = new NpgsqlCommand(@"
+        const string sql = @"
             SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, wikidataid, name_local, geometry
             FROM regions
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+            WHERE ST_Contains(geometry, @point)
+            LIMIT 1;";
 
-        cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
-        
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
-        {
-            return new Region
-            {
-                Id = reader.GetInt32(0),
-                Identifier = reader.GetString(1),
-                NameLatin = reader.GetString(2),
-                CountryIsoAlpha2Code = reader.GetString(3),
-                CountryIsoAlpha3Code = reader.GetString(4),
-                WikidataId = reader.GetString(5),
-                NameLocal = reader.GetString(6),
-                Geometry = (Geometry)reader.GetValue(7)
-            };
-        }
-
-        return null;
+        return await FindEntityByPointAsync(sql, MapRegionFromReader, latitude, longitude, cancellationToken);
     }
 
     private async Task<City?> FindCityByPointAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = _npgsqlDataSource.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
-
-        var point = $"POINT({longitude} {latitude})";
-        await using var cmd = new NpgsqlCommand(@"
+        const string sql = @"
             SELECT id, identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, region_identifier, name_local, geometry
             FROM cities
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+            WHERE ST_Contains(geometry, @point)
+            LIMIT 1;";
 
-        cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
-        
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
+        return await FindEntityByPointAsync(sql, MapCityFromReader, latitude, longitude, cancellationToken);
+    }
+
+    private static Country MapCountryFromReader(NpgsqlDataReader reader)
+    {
+        return new Country
         {
-            return new City
-            {
-                Id = reader.GetInt32(0),
-                Identifier = reader.GetString(1),
-                NameLatin = reader.GetString(2),
-                CountryIsoAlpha2Code = reader.GetString(3),
-                CountryIsoAlpha3Code = reader.GetString(4),
-                RegionIdentifier = reader.IsDBNull(5) ? null : reader.GetString(5),
-                NameLocal = reader.GetString(6),
-                Geometry = (Geometry)reader.GetValue(7)
-            };
-        }
+            Id = reader.GetInt32(0),
+            IsoAlpha2Code = reader.GetString(1),
+            IsoAlpha3Code = reader.GetString(2),
+            NameLatin = reader.GetString(3),
+            WikidataId = reader.GetString(4),
+            Geometry = (Geometry)reader.GetValue(5)
+        };
+    }
 
-        return null;
+    private static Region MapRegionFromReader(NpgsqlDataReader reader)
+    {
+        return new Region
+        {
+            Id = reader.GetInt32(0),
+            Identifier = reader.GetString(1),
+            NameLatin = reader.GetString(2),
+            CountryIsoAlpha2Code = reader.GetString(3),
+            CountryIsoAlpha3Code = reader.GetString(4),
+            WikidataId = reader.GetString(5),
+            NameLocal = reader.GetString(6),
+            Geometry = (Geometry)reader.GetValue(7)
+        };
+    }
+
+    private static City MapCityFromReader(NpgsqlDataReader reader)
+    {
+        return new City
+        {
+            Id = reader.GetInt32(0),
+            Identifier = reader.GetString(1),
+            NameLatin = reader.GetString(2),
+            CountryIsoAlpha2Code = reader.GetString(3),
+            CountryIsoAlpha3Code = reader.GetString(4),
+            RegionIdentifier = reader.IsDBNull(5) ? null : reader.GetString(5),
+            NameLocal = reader.GetString(6),
+            Geometry = (Geometry)reader.GetValue(7)
+        };
     }
 
     private async Task<(int RawOffset, int DstOffset)?> GetTimezoneOffsetAsync(double latitude, double longitude, CancellationToken cancellationToken = default)
     {
-        await using var connection = _npgsqlDataSource.CreateConnection();
-        await connection.OpenAsync(cancellationToken);
-
-        var point = $"POINT({longitude} {latitude})";
-        await using var cmd = new NpgsqlCommand(@"
+        const string sql = @"
             SELECT timezone_id
             FROM timezones
-            WHERE ST_Contains(geometry, ST_GeomFromText(@point, 4326))
-            LIMIT 1;", connection);
+            WHERE ST_Contains(geometry, @point)
+            LIMIT 1;";
 
-        cmd.Parameters.AddWithValue("point", NpgsqlDbType.Text, point);
-        
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
+        var timezoneId = await FindEntityByPointAsync(
+            sql,
+            reader => reader.GetString(0),
+            latitude,
+            longitude,
+            cancellationToken);
+
+        if (timezoneId != null)
         {
-            var timezoneId = reader.GetString(0);
-            _logger?.LogDebug("Found timezone ID '{TimezoneId}' in database for point ({Latitude}, {Longitude})", 
+            _logger.LogDebug(
+                "Found timezone ID '{TimezoneId}' in database for point ({Latitude}, {Longitude})",
                 timezoneId, latitude, longitude);
             return CalculateTimezoneOffset(timezoneId, DateTimeOffset.UtcNow);
         }
@@ -184,14 +190,14 @@ public sealed class GeoLocationService
         try
         {
             // Normalize timezone ID: trim whitespace and handle common variations
-            var normalizedId = timezoneId?.Trim();
+            var normalizedId = timezoneId.Trim();
             if (string.IsNullOrWhiteSpace(normalizedId))
             {
-                _logger?.LogWarning("Empty or null timezone ID provided");
+                _logger.LogWarning("Empty or null timezone ID provided");
                 return (0, 0);
             }
 
-            _logger?.LogDebug("Attempting to get timezone info for ID: '{TimezoneId}' (normalized from '{Original}')", 
+            _logger.LogDebug("Attempting to get timezone info for ID: '{TimezoneId}' (normalized from '{Original}')", 
                 normalizedId, timezoneId);
             
             // NodaTime works completely independently of system timezone files
@@ -202,15 +208,15 @@ public sealed class GeoLocationService
                 timeZone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(normalizedId);
                 if (timeZone == null)
                 {
-                    _logger?.LogWarning("Timezone '{TimezoneId}' not found in NodaTime database", normalizedId);
+                    _logger.LogWarning("Timezone '{TimezoneId}' not found in NodaTime database", normalizedId);
                     return (0, 0);
                 }
                 
-                _logger?.LogDebug("Successfully retrieved timezone info for '{TimezoneId}'", normalizedId);
+                _logger.LogDebug("Successfully retrieved timezone info for '{TimezoneId}'", normalizedId);
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error getting timezone '{TimezoneId}' from NodaTime", normalizedId);
+                _logger.LogError(ex, "Error getting timezone '{TimezoneId}' from NodaTime", normalizedId);
                 return (0, 0);
             }
 
@@ -231,14 +237,14 @@ public sealed class GeoLocationService
             var rawOffsetSeconds = standardOffset.Seconds;
             var dstOffsetSeconds = dstOffset.Seconds;
 
-            _logger?.LogDebug("Calculated timezone offset for '{TimezoneId}': RawOffset={RawOffset}s, DstOffset={DstOffset}s, Total={Total}s", 
+            _logger.LogDebug("Calculated timezone offset for '{TimezoneId}': RawOffset={RawOffset}s, DstOffset={DstOffset}s, Total={Total}s", 
                 normalizedId, rawOffsetSeconds, dstOffsetSeconds, totalOffset.Seconds);
 
             return (rawOffsetSeconds, dstOffsetSeconds);
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error calculating timezone offset for '{TimezoneId}'", timezoneId);
+            _logger.LogError(ex, "Error calculating timezone offset for '{TimezoneId}'", timezoneId);
             // Fallback: return UTC if timezone cannot be determined
             return (0, 0);
         }
