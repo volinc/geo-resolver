@@ -36,10 +36,8 @@ public sealed class CityPostProcessor : ICityPostProcessor
 		var regionUpdateCount = 0;
 		try
 		{
-			// Update cities with NULL region_identifier by finding matching regions via spatial join
-			// Use DISTINCT ON to handle cases where multiple regions might contain the same city
-			// We'll update each city only once with the first matching region
-			await using var regionUpdateCmd = new NpgsqlCommand(@"
+			// Stage 1: Use ST_Contains with centroid (strictest match)
+			await using var regionUpdateCmd1 = new NpgsqlCommand(@"
                 UPDATE cities c
                 SET region_identifier = sub.identifier
                 FROM (
@@ -54,9 +52,173 @@ public sealed class CityPostProcessor : ICityPostProcessor
                   ORDER BY c.id, r.id
                 ) sub
                 WHERE c.id = sub.id;", connection);
-			regionUpdateCmd.CommandTimeout = 300; // 5 minutes timeout for bulk update
-			regionUpdateCount = await regionUpdateCmd.ExecuteNonQueryAsync(cancellationToken);
-			_logger?.LogInformation("Updated region_identifier for {Count} cities using spatial queries", regionUpdateCount);
+			regionUpdateCmd1.CommandTimeout = 300;
+			var count1 = await regionUpdateCmd1.ExecuteNonQueryAsync(cancellationToken);
+			regionUpdateCount += count1;
+			_logger?.LogInformation("Stage 1: Updated region_identifier for {Count} cities using ST_Contains (centroid)", count1);
+			
+			// Stage 2: Use ST_Intersects with city geometry (more lenient, for cities on borders)
+			await using var regionUpdateCmd2 = new NpgsqlCommand(@"
+                UPDATE cities c
+                SET region_identifier = sub.identifier
+                FROM (
+                  SELECT DISTINCT ON (c.id) c.id, r.identifier
+                  FROM cities c
+                  INNER JOIN regions r ON (
+                    (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code = c.country_iso_alpha2_code)
+                    OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code = c.country_iso_alpha3_code)
+                  )
+                  WHERE c.region_identifier IS NULL
+                    AND ST_Intersects(r.geometry, c.geometry)
+                  ORDER BY c.id, r.id
+                ) sub
+                WHERE c.id = sub.id;", connection);
+			regionUpdateCmd2.CommandTimeout = 300;
+			var count2 = await regionUpdateCmd2.ExecuteNonQueryAsync(cancellationToken);
+			regionUpdateCount += count2;
+			_logger?.LogInformation("Stage 2: Updated region_identifier for {Count} cities using ST_Intersects (geometry)", count2);
+			
+			_logger?.LogInformation("Total updated region_identifier for {Count} cities using spatial queries", regionUpdateCount);
+			
+			// Check for cities that found a region but from a different country (should not happen, but verify)
+			await using var wrongCountryCmd = new NpgsqlCommand(@"
+                SELECT c.id, c.name_latin, c.country_iso_alpha2_code, c.country_iso_alpha3_code, c.region_identifier,
+                       r.country_iso_alpha2_code, r.country_iso_alpha3_code
+                FROM cities c
+                INNER JOIN regions r ON c.region_identifier = r.identifier
+                WHERE c.region_identifier IS NOT NULL
+                  AND (
+                    (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code IS NOT NULL AND c.country_iso_alpha2_code != r.country_iso_alpha2_code)
+                    OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code IS NOT NULL AND c.country_iso_alpha3_code != r.country_iso_alpha3_code)
+                    OR (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code IS NULL AND r.country_iso_alpha3_code IS NOT NULL AND c.country_iso_alpha2_code != (SELECT iso_alpha2_code FROM countries WHERE iso_alpha3_code = r.country_iso_alpha3_code LIMIT 1))
+                    OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code IS NULL AND r.country_iso_alpha2_code IS NOT NULL AND c.country_iso_alpha3_code != (SELECT iso_alpha3_code FROM countries WHERE iso_alpha2_code = r.country_iso_alpha2_code LIMIT 1))
+                  )
+                LIMIT 20;", connection);
+			await using var wrongCountryReader = await wrongCountryCmd.ExecuteReaderAsync(cancellationToken);
+			var wrongCountryCities = new List<string>();
+			while (await wrongCountryReader.ReadAsync(cancellationToken))
+			{
+				var id = wrongCountryReader.GetInt32(0);
+				var name = wrongCountryReader.GetString(1);
+				var cityAlpha2 = wrongCountryReader.IsDBNull(2) ? null : wrongCountryReader.GetString(2);
+				var cityAlpha3 = wrongCountryReader.IsDBNull(3) ? null : wrongCountryReader.GetString(3);
+				var regionId = wrongCountryReader.GetString(4);
+				var regionAlpha2 = wrongCountryReader.IsDBNull(5) ? null : wrongCountryReader.GetString(5);
+				var regionAlpha3 = wrongCountryReader.IsDBNull(6) ? null : wrongCountryReader.GetString(6);
+				wrongCountryCities.Add($"ID {id}: {name} (city country: {cityAlpha2 ?? cityAlpha3 ?? "NULL"}, region: {regionId}, region country: {regionAlpha2 ?? regionAlpha3 ?? "NULL"})");
+			}
+			if (wrongCountryCities.Count > 0)
+			{
+				_logger?.LogWarning("Found {Count} cities with region from different country (will be removed):", wrongCountryCities.Count);
+				foreach (var city in wrongCountryCities)
+					_logger?.LogWarning("  - {City}", city);
+				
+				// Delete cities with regions from different countries
+				await using var deleteWrongCountryCmd = new NpgsqlCommand(@"
+                    DELETE FROM cities c
+                    USING regions r
+                    WHERE c.region_identifier = r.identifier
+                      AND (
+                        (c.country_iso_alpha2_code IS NOT NULL AND r.country_iso_alpha2_code IS NOT NULL AND c.country_iso_alpha2_code != r.country_iso_alpha2_code)
+                        OR (c.country_iso_alpha3_code IS NOT NULL AND r.country_iso_alpha3_code IS NOT NULL AND c.country_iso_alpha3_code != r.country_iso_alpha3_code)
+                      );", connection);
+				deleteWrongCountryCmd.CommandTimeout = 60;
+				var deletedWrongCountryCount = await deleteWrongCountryCmd.ExecuteNonQueryAsync(cancellationToken);
+				_logger?.LogInformation("Deleted {Count} cities with regions from different countries", deletedWrongCountryCount);
+			}
+			
+			// Stage 3: Find cities that still don't have a region in their assigned country
+			// These cities are outside their assigned country's borders and should be removed
+			await using var unassignedCmd = new NpgsqlCommand(@"
+                SELECT c.id, c.name_latin, c.country_iso_alpha2_code, c.country_iso_alpha3_code
+                FROM cities c
+                WHERE c.region_identifier IS NULL
+                  AND (c.country_iso_alpha2_code IS NOT NULL OR c.country_iso_alpha3_code IS NOT NULL);", connection);
+			await using var reader = await unassignedCmd.ExecuteReaderAsync(cancellationToken);
+			var unassignedCities = new List<(int Id, string Name, string? CountryAlpha2, string? CountryAlpha3)>();
+			while (await reader.ReadAsync(cancellationToken))
+			{
+				var id = reader.GetInt32(0);
+				var name = reader.GetString(1);
+				var alpha2 = reader.IsDBNull(2) ? null : reader.GetString(2);
+				var alpha3 = reader.IsDBNull(3) ? null : reader.GetString(3);
+				unassignedCities.Add((id, name, alpha2, alpha3));
+			}
+			
+			if (unassignedCities.Count > 0)
+			{
+				_logger?.LogWarning("Stage 3: Found {Count} cities without region_identifier in their assigned country. These are outside country borders and will be removed:", unassignedCities.Count);
+				foreach (var city in unassignedCities)
+					_logger?.LogWarning("  - ID {Id}: {Name} (assigned country: {Country})", city.Id, city.Name, city.CountryAlpha2 ?? city.CountryAlpha3 ?? "NULL");
+				
+				// Delete cities that couldn't be assigned to any region in their assigned country
+				// This means they are outside their assigned country's borders
+				await using var deleteCmd = new NpgsqlCommand(@"
+                    DELETE FROM cities
+                    WHERE region_identifier IS NULL
+                      AND (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL);", connection);
+				deleteCmd.CommandTimeout = 60;
+				var deletedCount = await deleteCmd.ExecuteNonQueryAsync(cancellationToken);
+				_logger?.LogInformation("Stage 3: Deleted {Count} cities outside their assigned country's borders", deletedCount);
+				
+				// Verify deletion - check if any cities with NULL region_identifier still exist
+				await using var verifyCmd = new NpgsqlCommand(@"
+                    SELECT COUNT(*) 
+                    FROM cities 
+                    WHERE region_identifier IS NULL
+                      AND (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL);", connection);
+				var remainingCount = await verifyCmd.ExecuteScalarAsync(cancellationToken);
+				if (remainingCount != null && Convert.ToInt64(remainingCount) > 0)
+				{
+					_logger?.LogWarning("Warning: {Count} cities still remain without region_identifier after deletion attempt", remainingCount);
+					
+					// Log remaining cities for debugging
+					await using var remainingCmd = new NpgsqlCommand(@"
+                        SELECT id, name_latin, country_iso_alpha2_code, country_iso_alpha3_code
+                        FROM cities
+                        WHERE region_identifier IS NULL
+                          AND (country_iso_alpha2_code IS NOT NULL OR country_iso_alpha3_code IS NOT NULL)
+                        LIMIT 10;", connection);
+					await using var remainingReader = await remainingCmd.ExecuteReaderAsync(cancellationToken);
+					while (await remainingReader.ReadAsync(cancellationToken))
+					{
+						var id = remainingReader.GetInt32(0);
+						var name = remainingReader.GetString(1);
+						var alpha2 = remainingReader.IsDBNull(2) ? null : remainingReader.GetString(2);
+						var alpha3 = remainingReader.IsDBNull(3) ? null : remainingReader.GetString(3);
+						_logger?.LogWarning("  Remaining city: ID {Id}, {Name} (country: {Country})", id, name, alpha2 ?? alpha3 ?? "NULL");
+					}
+				}
+				
+				// Also check for cities without country codes but with NULL region_identifier
+				await using var noCountryCmd = new NpgsqlCommand(@"
+                    SELECT COUNT(*) 
+                    FROM cities 
+                    WHERE region_identifier IS NULL
+                      AND country_iso_alpha2_code IS NULL
+                      AND country_iso_alpha3_code IS NULL;", connection);
+				var noCountryCount = await noCountryCmd.ExecuteScalarAsync(cancellationToken);
+				if (noCountryCount != null && Convert.ToInt64(noCountryCount) > 0)
+				{
+					_logger?.LogWarning("Found {Count} cities without region_identifier and without country codes (these will not be deleted)", noCountryCount);
+					
+					// Log a few examples
+					await using var noCountryExamplesCmd = new NpgsqlCommand(@"
+                        SELECT id, name_latin
+                        FROM cities
+                        WHERE region_identifier IS NULL
+                          AND country_iso_alpha2_code IS NULL
+                          AND country_iso_alpha3_code IS NULL
+                        LIMIT 5;", connection);
+					await using var noCountryExamplesReader = await noCountryExamplesCmd.ExecuteReaderAsync(cancellationToken);
+					while (await noCountryExamplesReader.ReadAsync(cancellationToken))
+					{
+						var id = noCountryExamplesReader.GetInt32(0);
+						var name = noCountryExamplesReader.GetString(1);
+						_logger?.LogWarning("  City without country: ID {Id}, {Name}", id, name);
+					}
+				}
+			}
 		}
 		catch (Exception ex)
 		{

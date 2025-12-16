@@ -588,7 +588,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 							: properties.TryGetProperty("NAME", out var nameUpperProp) &&
 							  nameUpperProp.ValueKind == JsonValueKind.String
 								? nameUpperProp.GetString()
-								: "Unknown";
+							: "Unknown";
 					_logger?.LogWarning("Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
 						regionName, properties.GetRawText());
 				}
@@ -646,7 +646,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			// Try NAME (uppercase)
 			if ((nameLatin == "Unknown" || string.IsNullOrWhiteSpace(nameLatin)) &&
 			    properties.TryGetProperty("NAME", out var nameUpper) &&
-			    nameUpper.ValueKind == JsonValueKind.String)
+			         nameUpper.ValueKind == JsonValueKind.String)
 			{
 				var value = nameUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
@@ -714,7 +714,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 			// Try POSTAL (uppercase) as fallback
 			else if (properties.TryGetProperty("POSTAL", out var postalUpper) &&
-			         postalUpper.ValueKind == JsonValueKind.String)
+			    postalUpper.ValueKind == JsonValueKind.String)
 			{
 				var postalValue = postalUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(postalValue) && postalValue != "-99")
@@ -790,7 +790,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				else
 				{
 					// Still only alpha-2 (lookup failed or not found)
-					insertQuery = @"
+				insertQuery = @"
                     INSERT INTO regions (identifier, name_latin, country_iso_alpha2_code, country_iso_alpha3_code, geometry)
                     VALUES (@identifier, @name, @countryAlpha2Code, NULL, ST_GeomFromGeoJSON(@geometryJson))
                     ON CONFLICT (identifier, country_iso_alpha2_code) DO UPDATE
@@ -1109,25 +1109,25 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 					countryIsoAlpha2Code = defaultCountryIsoAlpha2Code.ToUpperInvariant();
 				}
 				else
+			{
+				skipped++;
+				var reason = "Missing or invalid country ISO code";
+				skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+
+				// Log first few skipped cities for debugging
+				if (skipped <= 10)
 				{
-					skipped++;
-					var reason = "Missing or invalid country ISO code";
-					skippedReasons[reason] = skippedReasons.GetValueOrDefault(reason, 0) + 1;
+					var cityName = properties.TryGetProperty("name", out var nameProp) &&
+					               nameProp.ValueKind == JsonValueKind.String
+						? nameProp.GetString()
+						: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
+						  nameAsciiProp.ValueKind == JsonValueKind.String
+							? nameAsciiProp.GetString()
+							: "Unknown";
+					_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
+				}
 
-					// Log first few skipped cities for debugging
-					if (skipped <= 10)
-					{
-						var cityName = properties.TryGetProperty("name", out var nameProp) &&
-						               nameProp.ValueKind == JsonValueKind.String
-							? nameProp.GetString()
-							: properties.TryGetProperty("nameascii", out var nameAsciiProp) &&
-							  nameAsciiProp.ValueKind == JsonValueKind.String
-								? nameAsciiProp.GetString()
-								: "Unknown";
-						_logger?.LogDebug("Skipped city '{CityName}' - missing/invalid country ISO code", cityName);
-					}
-
-					continue;
+				continue;
 				}
 			}
 
@@ -1150,7 +1150,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			}
 			// Fallback to ASCII transliteration if local name not available
 			else if (properties.TryGetProperty("NAMEASCII", out var nameAsciiUpper) &&
-			         nameAsciiUpper.ValueKind == JsonValueKind.String)
+			    nameAsciiUpper.ValueKind == JsonValueKind.String)
 			{
 				var value = nameAsciiUpper.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
