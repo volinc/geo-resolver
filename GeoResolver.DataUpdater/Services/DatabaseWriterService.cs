@@ -592,12 +592,12 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				if (skipped <= 10)
 				{
 					var regionName = properties.TryGetProperty("name", out var nameProp) &&
-					                 nameProp.ValueKind == JsonValueKind.String
-						? nameProp.GetString()
-						: properties.TryGetProperty("name_local", out var nameLocalProp) &&
-						  nameLocalProp.ValueKind == JsonValueKind.String
-							? nameLocalProp.GetString()
-							: "Unknown";
+				                 nameProp.ValueKind == JsonValueKind.String
+					? nameProp.GetString()
+					: properties.TryGetProperty("name_local", out var nameLocalPropForLog) &&
+					  nameLocalPropForLog.ValueKind == JsonValueKind.String
+						? nameLocalPropForLog.GetString()
+						: "Unknown";
 					_logger?.LogWarning("Skipped region '{RegionName}' - missing/invalid country ISO code. Properties: {Properties}",
 						regionName, properties.GetRawText());
 				}
@@ -692,18 +692,18 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			string identifier = "";
 
 			// Try ISO_3166_2 first (uppercase) - this is the most unique identifier
-			if (properties.TryGetProperty("ISO_3166_2", out var iso3166_2Upper) &&
-			    iso3166_2Upper.ValueKind == JsonValueKind.String)
+			if (properties.TryGetProperty("ISO_3166_2", out var iso31662Upper) &&
+			    iso31662Upper.ValueKind == JsonValueKind.String)
 			{
-				var iso3166Value = iso3166_2Upper.GetString();
+				var iso3166Value = iso31662Upper.GetString();
 				if (!string.IsNullOrWhiteSpace(iso3166Value) && iso3166Value != "-99")
 					identifier = iso3166Value.ToUpperInvariant();
 			}
 			// Try iso_3166_2 (lowercase - after ogr2ogr conversion)
-			else if (properties.TryGetProperty("iso_3166_2", out var iso3166_2) &&
-			         iso3166_2.ValueKind == JsonValueKind.String)
+			else if (properties.TryGetProperty("iso_3166_2", out var iso31662) &&
+			         iso31662.ValueKind == JsonValueKind.String)
 			{
-				var iso3166Value = iso3166_2.GetString();
+				var iso3166Value = iso31662.GetString();
 				if (!string.IsNullOrWhiteSpace(iso3166Value) && iso3166Value != "-99")
 					identifier = iso3166Value.ToUpperInvariant();
 			}
