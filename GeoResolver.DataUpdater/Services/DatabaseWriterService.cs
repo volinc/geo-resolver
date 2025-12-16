@@ -137,7 +137,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 				cmd.Parameters.AddWithValue("isoAlpha2Code", country.IsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(country.IsoAlpha3Code))
 				cmd.Parameters.AddWithValue("isoAlpha3Code", country.IsoAlpha3Code);
-			cmd.Parameters.AddWithValue("name", country.NameLatin);
+			// Apply CleanTransliterationResult to name_latin for countries
+			var cleanedNameLatin = _transliterationService.CleanTransliterationResult(country.NameLatin);
+			cmd.Parameters.AddWithValue("name", cleanedNameLatin);
 			cmd.Parameters.AddWithValue("wikidataid", country.WikidataId ?? (object)DBNull.Value);
 			cmd.Parameters.AddWithValue("geometry", NpgsqlDbType.Bytea, wkb);
 			await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -326,7 +328,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 					cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
 					cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code);
-					cmd.Parameters.AddWithValue("name", nameLatin);
+					// Apply CleanTransliterationResult to name_latin for countries
+					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
+					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
 					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
 					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
@@ -345,7 +349,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                             geometry = EXCLUDED.geometry;", connection, transaction);
 
 					cmd.Parameters.AddWithValue("isoAlpha2Code", isoAlpha2Code);
-					cmd.Parameters.AddWithValue("name", nameLatin);
+					// Apply CleanTransliterationResult to name_latin for countries
+					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
+					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
 					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
 					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
@@ -364,7 +370,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
                             geometry = EXCLUDED.geometry;", connection, transaction);
 
 					cmd.Parameters.AddWithValue("isoAlpha3Code", isoAlpha3Code!); // Not null in this branch
-					cmd.Parameters.AddWithValue("name", nameLatin);
+					// Apply CleanTransliterationResult to name_latin for countries
+					var cleanedNameLatin = _transliterationService.CleanTransliterationResult(nameLatin);
+					cmd.Parameters.AddWithValue("name", cleanedNameLatin);
 					cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
 					cmd.Parameters.AddWithValue("geometryJson", NpgsqlDbType.Jsonb, geometryJson);
 
@@ -502,7 +510,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", region.Identifier);
 			cmd.Parameters.AddWithValue("name", region.NameLatin);
-			cmd.Parameters.AddWithValue("nameLocal", region.NameLocal ?? (object)DBNull.Value);
+			// Apply Trim() to name_local for regions
+			var trimmedNameLocal = region.NameLocal?.Trim();
+			cmd.Parameters.AddWithValue("nameLocal", trimmedNameLocal ?? (object)DBNull.Value);
 			cmd.Parameters.AddWithValue("wikidataid", region.WikidataId ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);
@@ -721,14 +731,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLocal = value;
+					nameLocal = value.Trim();
 			}
 			// Then try name
 			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLocal = value;
+					nameLocal = value.Trim();
 			}
 			
 			// If no name found, skip
@@ -910,6 +920,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
+			// Apply Trim() to name_local for regions (nameLocal already trimmed when extracted from GeoJSON)
 			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
 			cmd.Parameters.AddWithValue("wikidataid", wikidataId ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
@@ -1043,7 +1054,9 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", city.Identifier);
 			cmd.Parameters.AddWithValue("name", city.NameLatin);
-			cmd.Parameters.AddWithValue("nameLocal", city.NameLocal ?? (object)DBNull.Value);
+			// Apply Trim() to name_local for cities
+			var trimmedCityNameLocal = city.NameLocal?.Trim();
+			cmd.Parameters.AddWithValue("nameLocal", trimmedCityNameLocal ?? (object)DBNull.Value);
 			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", city.CountryIsoAlpha2Code);
 			if (!string.IsNullOrWhiteSpace(city.CountryIsoAlpha3Code))
@@ -1274,14 +1287,14 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 			{
 				var value = nameLocalProp.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLocal = value;
+					nameLocal = value.Trim();
 			}
 			// Then try name
 			if (nameLocal == null && properties.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
 			{
 				var value = name.GetString();
 				if (!string.IsNullOrWhiteSpace(value))
-					nameLocal = value;
+					nameLocal = value.Trim();
 			}
 			
 			// If no name found, skip
@@ -1422,6 +1435,7 @@ public sealed class DatabaseWriterService : IDatabaseWriterService
 
 			cmd.Parameters.AddWithValue("identifier", identifier);
 			cmd.Parameters.AddWithValue("name", nameLatin);
+			// Apply Trim() to name_local for cities (nameLocal already trimmed when extracted from GeoJSON)
 			cmd.Parameters.AddWithValue("nameLocal", nameLocal);
 			if (!string.IsNullOrWhiteSpace(countryIsoAlpha2Code))
 				cmd.Parameters.AddWithValue("countryAlpha2Code", countryIsoAlpha2Code);

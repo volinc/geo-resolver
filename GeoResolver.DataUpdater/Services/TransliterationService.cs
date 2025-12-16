@@ -117,7 +117,7 @@ public sealed class TransliterationService : ITransliterationService
 					result = _cyrillicTransliterator.Transliterate(text);
 					if (!string.IsNullOrWhiteSpace(result) && result != text)
 					{
-						// Clean up: remove any remaining special characters, keep only ASCII letters, numbers, spaces, hyphens, dots
+						// Clean up: replace non-ASCII characters with spaces and trim
 						result = CleanTransliterationResult(result);
 						if (!string.IsNullOrWhiteSpace(result) && 
 						    result.Any(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')))
@@ -152,7 +152,7 @@ public sealed class TransliterationService : ITransliterationService
 					
 					if (!string.IsNullOrWhiteSpace(ruleResult) && ruleResult != text)
 					{
-						// Clean up the result
+						// Clean up: replace non-ASCII characters with spaces and trim
 						ruleResult = CleanTransliterationResult(ruleResult);
 						
 						if (!string.IsNullOrWhiteSpace(ruleResult) && 
@@ -180,22 +180,21 @@ public sealed class TransliterationService : ITransliterationService
 	}
 
 	/// <summary>
-	///     Cleans transliteration result by removing special characters, keeping only ASCII letters, numbers, spaces, hyphens, dots.
+	///     Cleans transliteration result by replacing all non-ASCII characters with spaces and trimming the result.
 	/// </summary>
-	private string CleanTransliterationResult(string result)
+	public string CleanTransliterationResult(string result)
 	{
-		var cleaned = new System.Text.StringBuilder();
-		foreach (var c in result)
+		if (string.IsNullOrEmpty(result))
 		{
-			if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
-			    (c >= '0' && c <= '9') || char.IsWhiteSpace(c) || 
-			    c == '-' || c == '.')
-			{
-				cleaned.Append(c);
-			}
-			// Skip apostrophes, quotes, and other special characters
+			return result;
 		}
-		return cleaned.ToString().Trim();
+
+		// Create a new string by iterating over the input characters.
+		// If the character is ASCII, keep it; otherwise, use a space.
+		var cleaned = new string(result.Select(c => char.IsAscii(c) ? c : ' ').ToArray());
+		
+		// Trim the entire string
+		return cleaned.Trim();
 	}
 
 	/// <summary>

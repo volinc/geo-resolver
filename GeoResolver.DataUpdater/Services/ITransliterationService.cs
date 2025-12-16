@@ -19,4 +19,11 @@ public interface ITransliterationService
 	/// <param name="text">Text to check</param>
 	/// <returns>True if text contains at least one Latin character</returns>
 	bool ContainsLatinCharacters(string text);
+
+	/// <summary>
+	///     Cleans text by replacing all non-ASCII characters with spaces and trimming the result.
+	/// </summary>
+	/// <param name="text">Text to clean</param>
+	/// <returns>Cleaned text with non-ASCII characters replaced by spaces and trimmed</returns>
+	string CleanTransliterationResult(string text);
 }
