@@ -39,6 +39,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # For Native AOT we run the self-contained binary produced into /app
+    # This is equivalent to ENTRYPOINT ["./GeoResolver"] in the Dockerfile final stage.
+    command: ["./GeoResolver"]
     environment:
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=geo_resolver;Username=reader;Password=pass"
       ASPNETCORE_URLS: "http://+:8080"

@@ -4,18 +4,10 @@ services:
     build:
       context: "/Users/vol.inc/Projects/Own/geo-resolver"
       dockerfile: "GeoResolver/Dockerfile"
-      target: "base"
-    command: []
-    entrypoint:
-    - "dotnet"
-    - "/app/bin/Release/net10.0/osx-arm64/GeoResolver.dll"
+      target: "final"
+    # Use ENTRYPOINT and CMD from the Dockerfile (./GeoResolver in final stage)
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_USE_POLLING_FILE_WATCHER: "true"
     image: "georesolver:dev"
     ports: []
-    volumes:
-    - "/Users/vol.inc/Projects/Own/geo-resolver/GeoResolver:/app:rw"
-    - "/Users/vol.inc/Projects/Own/geo-resolver:/src:rw"
-    - "/Users/vol.inc/.nuget/packages:/root/.nuget/packages"
-    working_dir: "/app"
