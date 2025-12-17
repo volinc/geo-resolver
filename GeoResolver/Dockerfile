@@ -1,6 +1,9 @@
 ## Stage 1: build and publish Native AOT binary (using .NET SDK AOT image)
 FROM mcr.microsoft.com/dotnet/sdk:10.0-noble-aot AS build
 
+# TARGETARCH is provided automatically by Docker BuildKit / buildx
+# (e.g. amd64, arm64). We use it to choose the correct .NET RID.
+ARG TARGETARCH
 ARG BUILD_CONFIGURATION=Release
 
 WORKDIR /src
@@ -12,14 +15,18 @@ RUN dotnet restore "GeoResolver/GeoResolver.csproj"
 # Copy the remaining source and publish as Native AOT
 COPY . .
 WORKDIR "/src/GeoResolver"
-RUN dotnet publish "./GeoResolver.csproj" \
-    -c $BUILD_CONFIGURATION \
-    -o /app/publish \
-    -r linux-x64 \
-    --self-contained true \
-    /p:PublishAot=true \
-    /p:PublishTrimmed=true \
-    /p:TrimMode=full
+RUN case "$TARGETARCH" in \
+        arm64) RID=linux-arm64 ;; \
+        *)     RID=linux-x64 ;; \
+    esac; \
+    dotnet publish "./GeoResolver.csproj" \
+        -c $BUILD_CONFIGURATION \
+        -o /app/publish \
+        -r "$RID" \
+        --self-contained true \
+        /p:PublishAot=true \
+        /p:PublishTrimmed=true \
+        /p:TrimMode=full
 
 
 ## Stage 2: minimal runtime image (self-contained Native AOT executable)
