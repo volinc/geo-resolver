@@ -3,6 +3,8 @@
   <component name="DataSourcePerFileMappings">
     <file url="file://$PROJECT_DIR$/.idea/.idea.GeoResolver/.idea/queries/Query_10.sql" value="7ba67049-c645-48e5-a39e-3c8ef5d3d003" />
     <file url="file://$PROJECT_DIR$/.idea/.idea.GeoResolver/.idea/queries/Query_11.sql" value="7ba67049-c645-48e5-a39e-3c8ef5d3d003" />
+    <file url="file://$PROJECT_DIR$/.idea/.idea.GeoResolver/.idea/queries/Query_12.sql" value="ccad8f7c-6c00-4083-9780-a1b7e0dd38bd" />
+    <file url="file://$PROJECT_DIR$/.idea/.idea.GeoResolver/.idea/queries/Query_13.sql" value="ccad8f7c-6c00-4083-9780-a1b7e0dd38bd" />
     <file url="file://$PROJECT_DIR$/scripts/docker-01-create-user.sql" value="7ba67049-c645-48e5-a39e-3c8ef5d3d003" />
     <file url="file://$PROJECT_DIR$/scripts/manual-01-create-user-and-database.sql" value="7ba67049-c645-48e5-a39e-3c8ef5d3d003" />
     <file url="file://$PROJECT_DIR$/scripts/manual-03-create-tables.sql" value="7ba67049-c645-48e5-a39e-3c8ef5d3d003" />
