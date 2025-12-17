@@ -1,5 +1,5 @@
-# Use Microsoft .NET distroless runtime-deps image for Native AOT (no .NET runtime needed)
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-distroless AS base
+# Use Microsoft .NET chiseled runtime-deps image for Native AOT (no .NET runtime needed)
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled AS base
 WORKDIR /app
 EXPOSE 8080
 
@@ -7,7 +7,7 @@ ENV TZ=UTC
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
 ENV ASPNETCORE_URLS=http://+:8080
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 ARG BUILD_CONFIGURATION=Release
 # Install Native AOT prerequisites for cross-compilation (ARM to x86_64)
 # Install clang, lld linker, and x86_64 cross-compilation tools
@@ -45,10 +45,10 @@ RUN dotnet publish "./GeoResolver.csproj" \
 FROM base AS final
 WORKDIR /app
 # Copy the native executable (not a DLL)
-COPY --from=publish /app/publish/GeoResolver .
+COPY --from=publish --chown=app:app /app/publish/GeoResolver .
 # Copy configuration files
-COPY --from=publish /app/publish/appsettings*.json ./
+COPY --from=publish --chown=app:app /app/publish/appsettings*.json ./
 # Run as non-root app user provided by .NET container images
-USER $APP_UID
+USER app
 # Native AOT produces a single executable, no need for dotnet command
 ENTRYPOINT ["./GeoResolver"]

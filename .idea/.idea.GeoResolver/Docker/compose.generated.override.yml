@@ -8,7 +8,7 @@ services:
     command: []
     entrypoint:
     - "dotnet"
-    - "/app/bin/Release/net10.0/GeoResolver.dll"
+    - "/app/bin/Release/net10.0/osx-arm64/GeoResolver.dll"
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_USE_POLLING_FILE_WATCHER: "true"
@@ -17,5 +17,5 @@ services:
     volumes:
     - "/Users/vol.inc/Projects/Own/geo-resolver/GeoResolver:/app:rw"
     - "/Users/vol.inc/Projects/Own/geo-resolver:/src:rw"
-    - "/Users/vol.inc/.nuget/packages:/home/app/.nuget/packages"
+    - "/Users/vol.inc/.nuget/packages:/root/.nuget/packages"
     working_dir: "/app"
