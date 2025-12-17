@@ -1,5 +1,5 @@
-# Use distroless image for Native AOT (no .NET runtime needed)
-FROM gcr.io/distroless/cc-debian12:nonroot AS base
+# Use Microsoft .NET distroless runtime-deps image for Native AOT (no .NET runtime needed)
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-distroless AS base
 WORKDIR /app
 EXPOSE 8080
 
@@ -48,5 +48,7 @@ WORKDIR /app
 COPY --from=publish /app/publish/GeoResolver .
 # Copy configuration files
 COPY --from=publish /app/publish/appsettings*.json ./
+# Run as non-root app user provided by .NET container images
+USER $APP_UID
 # Native AOT produces a single executable, no need for dotnet command
 ENTRYPOINT ["./GeoResolver"]
