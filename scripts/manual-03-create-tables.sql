@@ -1,6 +1,6 @@
 -- Idempotent script to create tables, indexes and other objects inside the database
 -- This script is for MANUAL execution
--- Requires: database 'geo_resolver' exists, user 'reader' exists, PostGIS extension enabled
+-- Requires: database 'geo_resolver' exists, PostGIS extension enabled
 -- Execute as postgres superuser: psql -U postgres -d geo_resolver -f scripts/manual-03-create-tables.sql
 
 -- Create table for tracking last update time
